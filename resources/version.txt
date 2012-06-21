@@ -1,0 +1,13 @@
+ MyLittleLisp v0.0.1 (22.06.2012)
+
+Licence:
+   This work is licensed under a Creative Commons Attribution 3.0 Unported 
+   Licence.
+   (http://creativecommons.org/licenses/by/3.0)
+
+
+                __.----_         \`.,~/  by Bystroushaak
+                \ ;     \,------'/_  _\  (bystrousak [at]
+                 `--.__-;; ,____. '\/    kitakitsune.org)
+                        ((/     \/       http://kitakitsune.org
+

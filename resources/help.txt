@@ -1,0 +1,16 @@
+MyLittleLisp by Bystroushaak (bystrousak@kitakitsune.org)
+
+./mll [-h, -v] [Nonoptional] [Optionals]
+
+Simple lisp interpreter.
+
+Parameters:
+	-a [LINK], --add [LINK]
+		Sample parameter.
+
+Optional parameters:
+	-h, --help
+		Print this help.
+	
+	-v, --version
+		Print program version.
