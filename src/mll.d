@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.1.0
- * Date:    23.06.2012
+ * Version: 0.2.0
+ * Date:    24.06.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -13,19 +13,37 @@
  *  Preprocesor pro '
  *  Repl smycku s pocitadlem zavorek, teprve pak evalnout.
  *  skipStringsAndFind(char c) 
+ *  
+ *  Opequals pro LispSymbol
+ *  Otestovat EnvStack
  *
 */
 module mll;
 
 import core.exception;
+import std.algorithm : remove;
 
 import std.stdio;		// TODO: Odstranit
 import std.string;
 
 
 /* Exceptions *********************************************************************************************************/
+class LispException : Exception{
+	this(string msg){
+		super(msg);
+	}
+}
+
+
 ///
-class ParseException : Exception{
+class ParseException : LispException{
+	this(string msg){
+		super(msg);
+	}
+}
+
+
+class UndefinedSymbolException : LispException{
 	this(string msg){
 		super(msg);
 	}
@@ -36,17 +54,23 @@ class ParseException : Exception{
 /* Objects ************************************************************************************************************/
 /// Generic object used for representation everything in my little lisp.
 class LispObject{
-	///
+	/// TODO testnout
 	public string toString(){
+		if (typeid(this) == typeid(LispArray))
+			return (cast(LispArray) this).toString();
+		else if (typeid(this) == typeid(LispSymbol))
+			return (cast(LispSymbol) this).toString();
+			
 		throw new Exception("Unimplemented : toString() for LispObject");
-		
-		return "";
 	}
 	
 	public string toLispString(){
-		throw new Exception("Unimplemented : toLispString() for LispObject");
+		if (typeid(this) == typeid(LispArray))
+			return (cast(LispArray) this).toLispString();
+		else if (typeid(this) == typeid(LispSymbol))
+			return (cast(LispSymbol) this).toLispString();
 		
-		return "";
+		throw new Exception("Unimplemented : toLispString() for LispObject");
 	}
 }
 
@@ -68,7 +92,7 @@ class LispArray : LispObject{
 		foreach(LispObject member; this.members){
 			output ~= member.toLispString() ~ " ";
 		}
-		
+		// remove space from the end of last object
 		if (output.length >= 2)
 			output.length--;
 		
@@ -102,6 +126,66 @@ class LispSymbol : LispObject{
 	/// Return lisp representation of this object
 	public string toLispString(){
 		return this.toString();
+	}
+}
+
+
+
+class EnvStack{
+	private LispObject[LispSymbol]   global_env;
+	private LispObject[LispSymbol][] local_env;
+	
+public:
+	this(){
+		this.pushBlank();
+	}
+	
+	void push(LispObject[LispSymbol] new_env){
+		this.local_env ~= new_env;
+	}
+	
+	void pushBlank(){
+		LispObject[LispSymbol] le;
+		this.local_env ~= le;
+	}
+	
+	void pop(){
+		if (local_env.length > 1)
+			local_env = local_env.remove(local_env.length);
+	}
+	
+	void addLocal(LispSymbol key, LispObject value){
+		this.local_env[local_env.length][key] = value;
+	}
+	
+	void addGlobal(LispSymbol key, LispObject value){
+		this.global_env[key] = value;
+	}
+	
+	//TODO: Checknout rozsahy
+	LispObject find(LispSymbol key){
+		for (int i = local_env.length; i >= 0; i--){
+			if ((key in local_env[i]) != null) // key in local environment?
+				return local_env[i][key];
+		}
+		
+		if ((key in global_env) != null)       // key in global environment?
+			return global_env[key];
+		
+		throw new UndefinedSymbolException("Undefined symbol '" ~ key.toString() ~ "'!");
+	}
+	
+	string toString(){
+		string output = "Local env:\n";
+		
+		for (int i = local_env.length; i >= 0; i--){
+			output ~= "\t" ~ std.conv.to!string(i) ~ ": " ~ std.conv.to!string(local_env[i]) ~ "\n";
+		}
+		
+		output ~= "\nGlobal env:\n";
+		output ~= "\t" ~ std.conv.to!string(global_env) ~ "\n";
+		
+		return output;
 	}
 }
 
@@ -151,9 +235,7 @@ private string[] splitSymbols(string symbols){
 
 
 /**
- * parseTree
- * 
- * This function splits
+ * See: parse() for details
  * 
 */ 
 private LispObject[] parseTree(string source, bool first){
@@ -180,7 +262,7 @@ private LispObject[] parseTree(string source, bool first){
 				source = source[expr_length + 1 .. $];
 			else
 				source.length = 0;
-		}else{
+		}else{ // parse symbols
 			string tmp;
 			
 			// to tmp save symbols in list until next expression (>>xe xa<< (exp)) -> tmp = xe xa
@@ -213,11 +295,22 @@ private LispObject[] parseTree(string source, bool first){
 	return output;
 }
 
+
+/**
+ * Parse lisp source code to in-memory tree of symbols.
+ * 
+ * Throws:
+ *   ParseException
+ *   RangeError
+ *
+*/ 
 public LispArray parse(string source){
 	return cast(LispArray) parseTree(source, true)[0];
 }
 
 
+
+/* Unittests **********************************************************************************************************/
 unittest{
 	// findMatchingBracket
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4)") == -1);
@@ -237,6 +330,9 @@ unittest{
 	testParseWithBothStrings("(a  (     b  )   	)", "[[a, [b]]]", "(a (b))");
 	testParseWithBothStrings("((((()))))", "[[[[[[]]]]]]", "()");
 	testParseWithBothStrings("(a (b (c (d (e)))))", "(a (b (c (d (e)))))", "[[a, [b, [c, [d, [e]]]]]]");
+	
+	// EnvStack
+	
 }
 
 
