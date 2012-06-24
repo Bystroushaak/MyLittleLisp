@@ -2,7 +2,7 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.2.0
+ * Version: 0.2.1
  * Date:    24.06.2012
  * 
  * Copyright: 
@@ -14,9 +14,7 @@
  *  Repl smycku s pocitadlem zavorek, teprve pak evalnout.
  *  skipStringsAndFind(char c) 
  *  
- *  Opequals pro LispSymbol
- *  Otestovat EnvStack
- *
+ *  Remove var pro EnvStack
 */
 module mll;
 
@@ -110,12 +108,16 @@ class LispArray : LispObject{
 }
 
 
-/// Object used for representing functions in parsed tree
+/// Object used for representing symbols in parsed tree
 class LispSymbol : LispObject{
 	private string name;
 	
 	this(string name){
 		this.name = name;
+	}
+	
+	public string getName(){
+		return this.name;
 	}
 	
 	///
@@ -132,39 +134,56 @@ class LispSymbol : LispObject{
 
 
 class EnvStack{
-	private LispObject[LispSymbol]   global_env;
-	private LispObject[LispSymbol][] local_env;
+	private LispObject[string]   global_env;
+	private LispObject[string][] local_env;
 	
 public:
+	///
 	this(){
-		this.pushBlank();
+		this.pushLevel();
 	}
 	
-	void push(LispObject[LispSymbol] new_env){
+	/**
+	 * Create new blank level of variable stack - used for multiple levels of local variables.
+	*/ 
+	void pushLevel(){
+		LispObject[string] le;
+		this.local_env ~= le;
+	}
+	/// See: pushLevel()
+	void pushLevel(LispObject[string] new_env){
 		this.local_env ~= new_env;
 	}
 	
-	void pushBlank(){
-		LispObject[LispSymbol] le;
-		this.local_env ~= le;
-	}
-	
-	void pop(){
+	/** 
+	 * Remove level of local variables.
+	 *
+	 * See: pushLevel()
+	*/
+	void popLevel(){
 		if (local_env.length > 1)
 			local_env = local_env.remove(local_env.length);
 	}
 	
-	void addLocal(LispSymbol key, LispObject value){
-		this.local_env[local_env.length][key] = value;
+	/**
+	 * Add new local variable.
+	 * 
+	 * Variables could be type of LispSymbol or LispList.
+	*/ 
+	void addLocal(string key, LispObject value){
+		this.local_env[local_env.length - 1][key] = value;
 	}
 	
-	void addGlobal(LispSymbol key, LispObject value){
+	/// Same as addLocal, but adds variables to global namespace
+	void addGlobal(string key, LispObject value){
 		this.global_env[key] = value;
 	}
 	
-	//TODO: Checknout rozsahy
-	LispObject find(LispSymbol key){
-		for (int i = local_env.length; i >= 0; i--){
+	/**
+	 * Find and return representation of variable.
+	*/ 
+	LispObject find(string key){
+		for (int i = local_env.length - 1; i >= 0; i--){
 			if ((key in local_env[i]) != null) // key in local environment?
 				return local_env[i][key];
 		}
@@ -172,13 +191,14 @@ public:
 		if ((key in global_env) != null)       // key in global environment?
 			return global_env[key];
 		
-		throw new UndefinedSymbolException("Undefined symbol '" ~ key.toString() ~ "'!");
+		throw new UndefinedSymbolException("Undefined symbol '" ~ key ~ "'!");
 	}
 	
+	///
 	string toString(){
 		string output = "Local env:\n";
 		
-		for (int i = local_env.length; i >= 0; i--){
+		for (int i = local_env.length - 1; i >= 0; i--){
 			output ~= "\t" ~ std.conv.to!string(i) ~ ": " ~ std.conv.to!string(local_env[i]) ~ "\n";
 		}
 		
@@ -312,14 +332,16 @@ public LispArray parse(string source){
 
 /* Unittests **********************************************************************************************************/
 unittest{
-	// findMatchingBracket
+	/* findMatchingBracket  *******************************************************************************************/
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4)") == -1);
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4))") == "(cons 1 (cons (q (2 3)) 4))".length);
 	
-	// splitSymbols
+	
+	/* splitSymbols ***************************************************************************************************/
 	assert(splitSymbols("a b") == ["a", "b"]);
 	
-	// parse
+	
+	/* parse **********************************************************************************************************/
 	void testParseWithBothStrings(string expr, string d_result, string lisp_result){
 		assert(parse(expr).toString()     == d_result);
 		assert(parse(expr).toLispString() == lisp_result);
@@ -329,10 +351,28 @@ unittest{
 	testParseWithBothStrings("(a (b))", "[[a, [b]]]", "(a (b))");
 	testParseWithBothStrings("(a  (     b  )   	)", "[[a, [b]]]", "(a (b))");
 	testParseWithBothStrings("((((()))))", "[[[[[[]]]]]]", "()");
-	testParseWithBothStrings("(a (b (c (d (e)))))", "(a (b (c (d (e)))))", "[[a, [b, [c, [d, [e]]]]]]");
+	testParseWithBothStrings("(a (b (c (d (e)))))", "[[a, [b, [c, [d, [e]]]]]]", "(a (b (c (d (e)))))");
 	
-	// EnvStack
 	
+	/* EnvStack *******************************************************************************************************/
+	EnvStack es = new EnvStack();
+	
+	// check global environment
+	es.addGlobal("plus", parse("(+ 1 2)"));
+	assert(es.find("plus").toString() == parse("(+ 1 2)").toString());
+	
+	// check local environment
+	es.addLocal("plus", parse("(++ 1 2)"));
+	assert(es.find("plus").toString() == parse("(++ 1 2)").toString());
+	
+	// check pushLevel()
+	es.pushLevel();
+	es.addLocal("plus", parse("(+++ 1 2)"));
+	assert(es.find("plus").toString() == parse("(+++ 1 2)").toString());
+	
+	// check popLevel()
+	es.popLevel();
+	assert(es.find("plus").toString() == parse("(++ 1 2)").toString());
 }
 
 
