@@ -2,7 +2,7 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.2.1
+ * Version: 0.3.0
  * Date:    24.06.2012
  * 
  * Copyright: 
@@ -41,6 +41,7 @@ class ParseException : LispException{
 }
 
 
+///
 class UndefinedSymbolException : LispException{
 	this(string msg){
 		super(msg);
@@ -52,7 +53,6 @@ class UndefinedSymbolException : LispException{
 /* Objects ************************************************************************************************************/
 /// Generic object used for representation everything in my little lisp.
 class LispObject{
-	/// TODO testnout
 	public string toString(){
 		if (typeid(this) == typeid(LispArray))
 			return (cast(LispArray) this).toString();
@@ -108,34 +108,93 @@ class LispArray : LispObject{
 }
 
 
-/// Object used for representing symbols in parsed tree
+/**
+ * LispSymbol - Object used for representing symbols in parsed tree
+*/ 
 class LispSymbol : LispObject{
-	private string name;
+	protected string name;
+	public    LispSymbol[] params;
 	
+	this(){}
 	this(string name){
 		this.name = name;
+	}
+	this(LispSymbol[] parameters){
+		this.params = parameters;
+	}
+	this(string name, LispSymbol[] parameters){
+		this.name   = name; 
+		this.params = parameters;
 	}
 	
 	public string getName(){
 		return this.name;
 	}
 	
-	///
-	public string toString(){
-		return this.name;
+	// Necesarry when you want to use objects as keys in associative array
+	public override bool opEquals(Object o){
+		LispSymbol s = cast(LispSymbol) o;
+		return s && s.getName() == this.name && s.params.length == this.params.length;
+	}
+	public override int opCmp(Object o){
+		LispSymbol s = cast(LispSymbol) o;
+		
+		if (!s)
+			return -1;
+			
+		if (!(s && s.opEquals(this) && this.opEquals(s)))
+			return -1;
+
+				return this.params.length - s.params.length;
+	}
+	public override hash_t toHash(){
+		return this.name.length + this.params.length;
 	}
 	
 	/// Return lisp representation of this object
-	public string toLispString(){
-		return this.toString();
+	public string toString(){
+		if (this.params.length == 0) 
+			return this.name;
+		
+		string output = this.name ~ "(";
+		foreach (LispSymbol s; this.params)
+			output ~= std.conv.to!string(s) ~ " ";
+		
+		// remove space from the end
+		if (this.params.length > 0 && output.length > 1)
+			output.length--;
+		
+		return output ~ ")";
 	}
+	public override string toLispString(){
+		string output;
+		
+		if (this.params.length == 0)
+			return this.name;
+		
+		output ~= "(defun "  ~ this.name ~ " (lambda (";
+		
+		foreach (LispSymbol s; this.params)
+			output ~= std.conv.to!string(s) ~ " ";
+		
+		// remove space from the end
+		if (this.params.length > 0 && output.length > 1)
+			output.length--;
+		
+		output ~= ") (";
+		
+		// TODO: dodělat - výpis těla z EnvStacku
+		
+		return output ~ "))";
+	}
+	
 }
 
 
 
 class EnvStack{
-	private LispObject[string]   global_env;
-	private LispObject[string][] local_env;
+	private LispObject[LispSymbol]   global_env;
+	private LispObject[LispSymbol][] local_env;
 	
 public:
 	///
@@ -147,11 +206,11 @@ public:
 	 * Create new blank level of variable stack - used for multiple levels of local variables.
 	*/ 
 	void pushLevel(){
-		LispObject[string] le;
+		LispObject[LispSymbol] le;
 		this.local_env ~= le;
 	}
 	/// See: pushLevel()
-	void pushLevel(LispObject[string] new_env){
+	void pushLevel(LispObject[LispSymbol] new_env){
 		this.local_env ~= new_env;
 	}
 	
@@ -170,29 +229,30 @@ public:
 	 * 
 	 * Variables could be type of LispSymbol or LispList.
 	*/ 
-	void addLocal(string key, LispObject value){
+	void addLocal(LispSymbol key, LispObject value){
 		this.local_env[local_env.length - 1][key] = value;
 	}
 	
 	/// Same as addLocal, but adds variables to global namespace
-	void addGlobal(string key, LispObject value){
+	void addGlobal(LispSymbol key, LispObject value){
 		this.global_env[key] = value;
 	}
 	
 	/**
 	 * Find and return representation of variable.
 	*/ 
-	LispObject find(string key){
+	LispObject find(LispSymbol key){
 		for (int i = local_env.length - 1; i >= 0; i--){
-			if ((key in local_env[i]) != null) // key in local environment?
+			if (key in local_env[i]) // key in local environment?
 				return local_env[i][key];
 		}
 		
-		if ((key in global_env) != null)       // key in global environment?
+		if (key in global_env)       // key in global environment?
 			return global_env[key];
 		
-		throw new UndefinedSymbolException("Undefined symbol '" ~ key ~ "'!");
+		throw new UndefinedSymbolException("Undefined symbol '" ~ std.conv.to!string(key) ~ "'!");
 	}
+	
 	
 	///
 	string toString(){
@@ -211,7 +271,10 @@ public:
 
 
 
-/* Functions **********************************************************************************************************/
+
+/***********************************************************************************************************************
+* Functions ************************************************************************************************************
+***********************************************************************************************************************/
 /**
  * FindMatchingBracket - function, which go thru source and returns first matching bracket.
  * 
@@ -330,9 +393,76 @@ public LispArray parse(string source){
 
 
 
+public LispObject eval(LispObject expr, EnvStack env){
+	env.pushLevel();
+	
+	if (typeid(expr) == typeid(LispSymbol)){ // variable reference
+		LispSymbol s = cast(LispSymbol) expr;
+		
+		// look to the symbol table, return saved value or numeric value, or throw error, if expr is not value or number
+		try{
+			return env.find(s);
+		}catch(UndefinedSymbolException e){
+			try{
+				std.conv.to!int(s.getName());
+			}catch(std.conv.ConvException){
+				try{
+					std.conv.to!double(s.getName());
+				}catch(std.conv.ConvException){
+					throw e;
+				}
+			}
+		}
+		
+		return expr;
+	}else{
+//		LispObject exps;
+//		foreach(LispObject o; expr)
+//			exps ~= eval(o, env);
+//		
+//		LispObject fn = exps[0];
+//		exps.remove(0);
+//		
+//		return 
+	}
+	
+	return expr; // TODO odstranit!!
+	
+	scope(exit){ // D, fuck yeah
+		env.popLevel();
+	}
+}
+
+
+
 /* Unittests **********************************************************************************************************/
 unittest{
-	/* findMatchingBracket  *******************************************************************************************/
+	/* LispSymbol *****************************************************************************************************/
+	LispSymbol s1 = new LispSymbol("asd");
+	LispSymbol s2 = new LispSymbol("asd");
+	LispSymbol s3 = new LispSymbol("bsd");
+	assert(s1 == s2);
+	assert(s2 == s1);
+	assert(s2 != s3);
+	assert(s1 != s3);
+	
+	int[LispSymbol] aa;
+	aa[s1] = 2;
+	assert(s1 in aa);
+	assert(s2 in aa);
+	assert(!(s3 in aa));
+	
+	LispSymbol s4 = new LispSymbol("asd");
+	LispSymbol s5 = new LispSymbol("asd", [new LispSymbol("a"), new LispSymbol("b")]);
+	LispSymbol s6 = new LispSymbol("asd", [new LispSymbol("x"), new LispSymbol("y")]);
+	
+	assert(s4 != s5);
+	assert(s4 != s6);
+	
+	assert(s5 == s6);
+	
+	
+	/* findMatchingBracket ********************************************************************************************/
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4)") == -1);
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4))") == "(cons 1 (cons (q (2 3)) 4))".length);
 	
@@ -358,21 +488,21 @@ unittest{
 	EnvStack es = new EnvStack();
 	
 	// check global environment
-	es.addGlobal("plus", parse("(+ 1 2)"));
-	assert(es.find("plus").toString() == parse("(+ 1 2)").toString());
+	es.addGlobal(new LispSymbol("plus"), parse("(+ 1 2)"));
+	assert(es.find(new LispSymbol("plus")).toString() == parse("(+ 1 2)").toString());
 	
 	// check local environment
-	es.addLocal("plus", parse("(++ 1 2)"));
-	assert(es.find("plus").toString() == parse("(++ 1 2)").toString());
+	es.addLocal(new LispSymbol("plus"), parse("(++ 1 2)"));
+	assert(es.find(new LispSymbol("plus")).toString() == parse("(++ 1 2)").toString());
 	
 	// check pushLevel()
 	es.pushLevel();
-	es.addLocal("plus", parse("(+++ 1 2)"));
-	assert(es.find("plus").toString() == parse("(+++ 1 2)").toString());
+	es.addLocal(new LispSymbol("plus"), parse("(+++ 1 2)"));
+	assert(es.find(new LispSymbol("plus")).toString() == parse("(+++ 1 2)").toString());
 	
 	// check popLevel()
 	es.popLevel();
-	assert(es.find("plus").toString() == parse("(++ 1 2)").toString());
+	assert(es.find(new LispSymbol("plus")).toString() == parse("(++ 1 2)").toString());
 }
 
 
