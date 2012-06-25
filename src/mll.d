@@ -51,6 +51,7 @@ class BadNumberOfParametersException : LispException{
 }
 
 
+
 /* Objects ************************************************************************************************************/
 /// Generic object used for representation everything in my little lisp.
 class LispObject{
@@ -119,8 +120,8 @@ class LispArray : LispObject{
  * LispSymbol - Object used for representing symbols in parsed tree
 */ 
 class LispSymbol : LispObject{
-	protected string name;
-	public    LispSymbol[] params;
+	protected string   name;
+	public LispSymbol[] params;
 	
 	this(){}
 	this(string name){
@@ -198,7 +199,11 @@ class LispSymbol : LispObject{
 }
 
 
-
+/**
+ * Environment Stack
+ * 
+ * This object is used for storing functions and variables.
+*/ 
 class EnvStack{
 	private LispObject[LispSymbol]   global_env;
 	private LispObject[LispSymbol][] local_env;
@@ -246,7 +251,7 @@ public:
 	}
 	
 	/**
-	 * Find and return representation of variable.
+	 * Find and return representation of symbol.
 	*/ 
 	LispObject find(LispSymbol key){
 		for (int i = local_env.length - 1; i >= 0; i--){
@@ -258,6 +263,20 @@ public:
 			return global_env[key];
 		
 		throw new UndefinedSymbolException("Undefined symbol '" ~ std.conv.to!string(key) ~ "'!");
+	}
+	
+	LispSymbol[] findSymbolParameters(LispSymbol key){
+		for (int i = local_env.length - 1; i >= 0; i--){
+			foreach(LispSymbol k; local_env[i].keys)
+				if (key == k)
+					return k.params;
+		}
+		
+		foreach(LispSymbol k; global_env.keys)
+			if (key == k)
+				return k.params;
+		
+		throw new UndefinedSymbolException("Undefined function '" ~ std.conv.to!string(key) ~ "'!");
 	}
 	
 	
@@ -406,7 +425,7 @@ public LispObject eval(LispObject expr, EnvStack env){
 		env.popLevel();
 	}
 	
-	writeln("incomming: ", expr.toLispString());
+	writeln("incomming: ", expr.toString());
 	
 	LispArray la;
 	LispSymbol s;
@@ -450,78 +469,97 @@ public LispObject eval(LispObject expr, EnvStack env){
 	}
 	
 	// eval every expression in list
-	LispObject[] exps;
+	LispObject[] par_values;
 	foreach(LispObject o; (cast(LispArray) expr).getMembers())
-		exps ~= eval(o, env);
-	
-	// values are just returned
-	if (exps.length == 1)
-		return exps[0];
+		par_values ~= eval(o, env);
 		
-	LispObject fn = exps[0];
-	exps = exps.remove(0);
+//	// values are just returned
+//	if (par_values.length == 1)
+//		return par_values[0];
+	
+	LispObject fn = par_values[0];
+	par_values = par_values.remove(0);
 	
 	
-	// executor - thic block executes function calls
-	if (typeid(fn) == typeid(LispSymbol)){       // named function evaluation
+	/* Executor - thic block executes function calls ******************************************************************/
+	if (typeid(fn) == typeid(LispSymbol)){ // named function evaluation
+		s = cast(LispSymbol) fn;
+		foreach(LispObject l; par_values)   // add "parameters" (values are not important, there just have to be same count)
+			s.params ~= new LispSymbol();
 		
-		throw new LispException("Undefined function lookup!");
+		LispSymbol[] par_names = env.findSymbolParameters(s);
+		
+		return evalFunctionCall(env.find(s), new LispArray(cast(LispObject[]) par_names), par_values, env);
+		
+		throw new LispException("Function " ~ std.conv.to!string(fn) ~ " not found!");
 	}else if (typeid(fn) == typeid(LispArray)){ // lambda evaluation
 		la = cast(LispArray) fn;
 		members = la.getMembers();
 		
 		if (members.length > 0 && typeid(members[0]) == typeid(LispSymbol) && (s = cast(LispSymbol) members[0]).getName().toLower() == "lambda"){
-			LispObject output;
-			
-			// install parameters
 			if (members.length != 3)
 				throw new BadNumberOfParametersException("lambda must have 2 parameters!"); // lambda, params, body
 			
-			LispObject parameters  = members[1];
-			LispObject lambda_body = members[2];
-			
-			if (typeid(parameters) == typeid(LispSymbol)){
-				if (exps.length != 1)
-					throw new BadNumberOfParametersException(
-						"This lambda expression expects only one parameter, but you try to call it with " ~ 
-						std.conv.to!string(exps.length) ~ "!");
-				
-				env.pushLevel();
-				env.addLocal(cast(LispSymbol) parameters, exps[0]);
-			}else if (typeid(parameters) == typeid(LispArray)){
-				la = cast(LispArray) parameters;
-				members = la.getMembers();
-				
-				writeln(members, "==", exps);
-				
-				if (members.length != exps.length)
-					throw new BadNumberOfParametersException(
-						"This lambda expression expects " ~ std.conv.to!string(members.length) ~ 
-						" parameters, not " ~ std.conv.to!string(exps.length) ~  "!");
-				
-				env.pushLevel();
-				for(int i = 0; i < members.length; i++){
-					s = cast(LispSymbol) members[i];
-					
-					if (!s){
-						env.popLevel();
-						throw new LispException("Parameter names must be symbols, not arrays!");
-					}
-					
-					env.addLocal(s, exps[i]);
-				}
-			}else{
-				throw new LispException("Unknown type of parameters for your lambda call - you did some weird shit, didn't you?");
-			}
-			
-			// return evaluated lambda
-			output = eval(lambda_body, env);
-			env.popLevel(); // remove lambda parameters
-			return output;
+			return evalFunctionCall(members[1], members[2], par_values, env);
 		}
 	}
 	
+//	// values are just returned
+//	if (par_values.length == 1)
+//		return fn;
+	
 	throw new UndefinedSymbolException("Undefined symbol or builtin keyword '" ~ std.conv.to!string(expr) ~ "'!");
+}
+
+
+/**
+ * Map parameters to the new local namespace and evaluate function body after that.
+ * 
+ * This function maps par_names:par_values to enviroment env and then runs the function_body.
+*/ 
+private LispObject evalFunctionCall(LispObject function_body, LispObject par_names, LispObject[] par_values, EnvStack env){
+	LispArray la;
+	LispSymbol s;
+	LispObject[] members;
+	
+	scope(success){
+		env.popLevel();
+	}
+	
+	if (typeid(par_names) == typeid(LispSymbol)){ // one parameter
+		if (par_values.length != 1)
+			throw new BadNumberOfParametersException(
+				"This lambda expression expects only one parameter, but you try to call it with " ~ 
+				std.conv.to!string(par_values.length) ~ "!");
+		
+		env.pushLevel();
+		env.addLocal(cast(LispSymbol) par_names, par_values[0]);
+	}else if (typeid(par_names) == typeid(LispArray)){ // multiple parameters
+		la = cast(LispArray) par_names;
+		members = la.getMembers();
+		
+		// there must be equal number of parameters and their values
+		if (members.length != par_values.length)
+			throw new BadNumberOfParametersException(
+				"This lambda expression expects " ~ std.conv.to!string(members.length) ~ 
+				" parameters, not " ~ std.conv.to!string(par_values.length) ~  "!");
+		
+		// put parameters into lambda environment
+		env.pushLevel();
+		for(int i = 0; i < members.length; i++){
+			s = cast(LispSymbol) members[i];
+			
+			if (!s){
+				env.popLevel();
+				throw new LispException("Parameter names must be symbols, not arrays!");
+			}
+			
+			env.addLocal(s, par_values[i]);
+		}
+	}else
+		throw new LispException("Unknown type of parameters for your lambda call - you did some weird shit, didn't you?");
+	
+	return eval(function_body, env);
 }
 
 
