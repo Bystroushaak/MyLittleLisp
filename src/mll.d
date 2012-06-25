@@ -414,11 +414,17 @@ private LispObject[] parseTree(string source, bool first){
  *
 */ 
 public LispArray parse(string source){
-	return cast(LispArray) parseTree(source, true)[0];
-}
+	return cast(LispArray) (cast(LispArray) parseTree(source, true)[0]).getMembers()[0];
+} 
 
 
-
+/**
+ * Evaluate expression expr in environment env.
+ * 
+ * Params:
+ *  expr = parsed tree of lisp expressions
+ *  env  = environment of variables
+*/ 
 public LispObject eval(LispObject expr, EnvStack env){
 	env.pushLevel();     // install new local namespace
 	scope(exit){        // D, fuck yeah
@@ -458,13 +464,29 @@ public LispObject eval(LispObject expr, EnvStack env){
 		if (s.getName().toLower() == "lambda") 
 			return la; // lambdas are returned back, because eval evals them later with args
 		else if (s.getName().toLower() == "q" || s.getName().toLower() == "quote"){
-			if (members.length == 1)
-				throw new BadNumberOfParametersException("quote expects one or more parameters!");
+			if (members.length != 2)
+				throw new BadNumberOfParametersException("quote expects only one parameter!");
 			
-			if (members.length == 2)
 				return members[1];
-			else
-				return new LispArray(members[1 .. $]);
+		}else if (s.getName().toLower() == "val?"){
+			if (members.length != 2)
+				throw new BadNumberOfParametersException("val expects only one parameter!");
+			
+			return eval(members[1], env);
+		}else if (s.getName().toLower() == "cons"){
+			if (members.length != 3)
+				throw new BadNumberOfParametersException("cons expects two parameters!");
+			
+			LispObject[] output;
+			
+			foreach(LispObject lo; [eval(members[1], env), eval(members[2], env)]){
+				if (typeid(lo) == typeid(LispSymbol))
+					output ~= lo;
+				else if (typeid(lo) == typeid(LispArray))
+					output ~= (cast(LispArray) lo).getMembers();
+			}
+			
+			return new LispArray(output);
 		}
 	}
 	
@@ -473,13 +495,9 @@ public LispObject eval(LispObject expr, EnvStack env){
 	foreach(LispObject o; (cast(LispArray) expr).getMembers())
 		par_values ~= eval(o, env);
 		
-//	// values are just returned
-//	if (par_values.length == 1)
-//		return par_values[0];
-	
+	// separate function name from parameters
 	LispObject fn = par_values[0];
 	par_values = par_values.remove(0);
-	
 	
 	/* Executor - thic block executes function calls ******************************************************************/
 	if (typeid(fn) == typeid(LispSymbol)){ // named function evaluation
@@ -500,13 +518,9 @@ public LispObject eval(LispObject expr, EnvStack env){
 			if (members.length != 3)
 				throw new BadNumberOfParametersException("lambda must have 2 parameters!"); // lambda, params, body
 			
-			return evalFunctionCall(members[1], members[2], par_values, env);
+			return evalFunctionCall(members[2], members[1], par_values, env);
 		}
 	}
-	
-//	// values are just returned
-//	if (par_values.length == 1)
-//		return fn;
 	
 	throw new UndefinedSymbolException("Undefined symbol or builtin keyword '" ~ std.conv.to!string(expr) ~ "'!");
 }
@@ -529,7 +543,7 @@ private LispObject evalFunctionCall(LispObject function_body, LispObject par_nam
 	if (typeid(par_names) == typeid(LispSymbol)){ // one parameter
 		if (par_values.length != 1)
 			throw new BadNumberOfParametersException(
-				"This lambda expression expects only one parameter, but you try to call it with " ~ 
+				"This lambda expression takes only one parameter, but you are trying to call it with " ~ 
 				std.conv.to!string(par_values.length) ~ "!");
 		
 		env.pushLevel();
@@ -605,12 +619,12 @@ unittest{
 		assert(parse(expr).toString()     == d_result);
 		assert(parse(expr).toLispString() == lisp_result);
 	}
-	testParseWithBothStrings("()", "[[]]", "()");
-	testParseWithBothStrings("(a)", "[[a]]", "(a)");
-	testParseWithBothStrings("(a (b))", "[[a, [b]]]", "(a (b))");
-	testParseWithBothStrings("(a  (     b  )   	)", "[[a, [b]]]", "(a (b))");
-	testParseWithBothStrings("((((()))))", "[[[[[[]]]]]]", "()");
-	testParseWithBothStrings("(a (b (c (d (e)))))", "[[a, [b, [c, [d, [e]]]]]]", "(a (b (c (d (e)))))");
+	testParseWithBothStrings("()", "[]", "()");
+	testParseWithBothStrings("(a)", "[a]", "(a)");
+	testParseWithBothStrings("(a (b))", "[a, [b]]", "(a (b))");
+	testParseWithBothStrings("(a  (     b  )   	)", "[a, [b]]", "(a (b))");
+	testParseWithBothStrings("((((()))))", "[[[[[]]]]]", "()");
+	testParseWithBothStrings("(a (b (c (d (e)))))", "[a, [b, [c, [d, [e]]]]]", "(a (b (c (d (e)))))");
 	
 	
 	/* EnvStack *******************************************************************************************************/
