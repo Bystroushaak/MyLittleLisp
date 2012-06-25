@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.3.0
- * Date:    24.06.2012
+ * Version: 0.4.0
+ * Date:    25.06.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -31,23 +31,24 @@ class LispException : Exception{
 		super(msg);
 	}
 }
-
-
 ///
 class ParseException : LispException{
 	this(string msg){
 		super(msg);
 	}
 }
-
-
 ///
 class UndefinedSymbolException : LispException{
 	this(string msg){
 		super(msg);
 	}
 }
-
+///
+class BadNumberOfParametersException : LispException{
+	this(string msg){
+		super(msg);
+	}
+}
 
 
 /* Objects ************************************************************************************************************/
@@ -75,12 +76,18 @@ class LispObject{
 
 /// Object used for representation of mll arrays.
 class LispArray : LispObject{
-	public LispObject[] members;
+	private LispObject[] members;
 	
 	this(){}
 	
 	this(LispObject[] members){
 		this.members = members;
+	}
+	
+	// I didn't wanted to do this, but dmd forced me :( -> "Error: need 'this' to access member members" when calling
+	// la.members[0]
+	public LispObject[] getMembers(){
+		return members;
 	}
 	
 	/// Returns lisp representation of this list
@@ -221,7 +228,7 @@ public:
 	*/
 	void popLevel(){
 		if (local_env.length > 1)
-			local_env = local_env.remove(local_env.length);
+			local_env = local_env.remove(local_env.length - 1);
 	}
 	
 	/**
@@ -394,14 +401,22 @@ public LispArray parse(string source){
 
 
 public LispObject eval(LispObject expr, EnvStack env){
-	env.pushLevel();
+	env.pushLevel();     // install new local namespace
+	scope(exit){        // D, fuck yeah
+		env.popLevel();
+	}
 	
-	if (typeid(expr) == typeid(LispSymbol)){ // variable reference
-		LispSymbol s = cast(LispSymbol) expr;
+	writeln("incomming: ", expr.toLispString());
+	
+	LispArray la;
+	LispSymbol s;
+	LispObject[] members;
+	if (typeid(expr) == typeid(LispSymbol)){ // handle variables
+		s = cast(LispSymbol) expr;
 		
-		// look to the symbol table, return saved value or numeric value, or throw error, if expr is not value or number
+		// look to the symbol table, return saved value, numeric value, or throw error, if expr is not value/number
 		try{
-			return env.find(s);
+			return env.find(s); // return saved value
 		}catch(UndefinedSymbolException e){
 			try{
 				std.conv.to!int(s.getName());
@@ -409,28 +424,104 @@ public LispObject eval(LispObject expr, EnvStack env){
 				try{
 					std.conv.to!double(s.getName());
 				}catch(std.conv.ConvException){
-					throw e;
+					throw new UndefinedSymbolException(e.msg);
 				}
 			}
 		}
 		
-		return expr;
-	}else{
-//		LispObject exps;
-//		foreach(LispObject o; expr)
-//			exps ~= eval(o, env);
-//		
-//		LispObject fn = exps[0];
-//		exps.remove(0);
-//		
-//		return 
+		return s; // return numeric value
+	}else if ((typeid(expr) == typeid(LispArray)) && // builtin keyword calling;     gimme LispArray
+	           ((members = (la = cast(LispArray) expr).getMembers()).length > 0) && // which have one or more members
+	           (typeid(members[0]) == typeid(LispSymbol))                       ){ // and first member is LispSymbol
+		s = cast(LispSymbol) members[0];                                            // get function name
+		
+		/* Internal keyword definitions *******************************************************************************/
+		if (s.getName().toLower() == "lambda") 
+			return la; // lambdas are returned back, because eval evals them later with args
+		else if (s.getName().toLower() == "q" || s.getName().toLower() == "quote"){
+			if (members.length == 1)
+				throw new BadNumberOfParametersException("quote expects one or more parameters!");
+			
+			if (members.length == 2)
+				return members[1];
+			else
+				return new LispArray(members[1 .. $]);
+		}
 	}
 	
-	return expr; // TODO odstranit!!
+	// eval every expression in list
+	LispObject[] exps;
+	foreach(LispObject o; (cast(LispArray) expr).getMembers())
+		exps ~= eval(o, env);
 	
-	scope(exit){ // D, fuck yeah
-		env.popLevel();
+	// values are just returned
+	if (exps.length == 1)
+		return exps[0];
+		
+	LispObject fn = exps[0];
+	exps = exps.remove(0);
+	
+	
+	// executor - thic block executes function calls
+	if (typeid(fn) == typeid(LispSymbol)){       // named function evaluation
+		
+		throw new LispException("Undefined function lookup!");
+	}else if (typeid(fn) == typeid(LispArray)){ // lambda evaluation
+		la = cast(LispArray) fn;
+		members = la.getMembers();
+		
+		if (members.length > 0 && typeid(members[0]) == typeid(LispSymbol) && (s = cast(LispSymbol) members[0]).getName().toLower() == "lambda"){
+			LispObject output;
+			
+			// install parameters
+			if (members.length != 3)
+				throw new BadNumberOfParametersException("lambda must have 2 parameters!"); // lambda, params, body
+			
+			LispObject parameters  = members[1];
+			LispObject lambda_body = members[2];
+			
+			if (typeid(parameters) == typeid(LispSymbol)){
+				if (exps.length != 1)
+					throw new BadNumberOfParametersException(
+						"This lambda expression expects only one parameter, but you try to call it with " ~ 
+						std.conv.to!string(exps.length) ~ "!");
+				
+				env.pushLevel();
+				env.addLocal(cast(LispSymbol) parameters, exps[0]);
+			}else if (typeid(parameters) == typeid(LispArray)){
+				la = cast(LispArray) parameters;
+				members = la.getMembers();
+				
+				writeln(members, "==", exps);
+				
+				if (members.length != exps.length)
+					throw new BadNumberOfParametersException(
+						"This lambda expression expects " ~ std.conv.to!string(members.length) ~ 
+						" parameters, not " ~ std.conv.to!string(exps.length) ~  "!");
+				
+				env.pushLevel();
+				for(int i = 0; i < members.length; i++){
+					s = cast(LispSymbol) members[i];
+					
+					if (!s){
+						env.popLevel();
+						throw new LispException("Parameter names must be symbols, not arrays!");
+					}
+					
+					env.addLocal(s, exps[i]);
+				}
+			}else{
+				throw new LispException("Unknown type of parameters for your lambda call - you did some weird shit, didn't you?");
+			}
+			
+			// return evaluated lambda
+			output = eval(lambda_body, env);
+			env.popLevel(); // remove lambda parameters
+			return output;
+		}
 	}
+	
+	throw new UndefinedSymbolException("Undefined symbol or builtin keyword '" ~ std.conv.to!string(expr) ~ "'!");
 }
 
 
