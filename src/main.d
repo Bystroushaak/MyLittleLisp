@@ -11,6 +11,7 @@
 */
 import std.stdio;
 import std.getopt;
+import std.string;
 
 
 import mll;
@@ -50,9 +51,38 @@ int main(string[] args){
 	
 	// here goes program
 	
-//	foreach(o; mll.cut("(cons 1 (cons (q (2 3)) 4))")){
-//		writeln(o);
-//	}
+//	Potenciální unittest
+	EnvStack es = new EnvStack();
+	es.addLocal(new LispSymbol("id"), parse("(lambda x x)"));
+	es.addLocal(new LispSymbol("eval"), parse("(lambda x (x))"));
+//	es.addLocal(new LispSymbol("plus", [new LispSymbol("a"), new LispSymbol("b")]), parse("(+ a b)"));
+//	
+	writeln(es);
+//	
+//	writeln("plus:\t\t", es.find(new LispSymbol("plus")));
+//	writeln("plus(x, y):\t", es.find(new LispSymbol("plus", [new LispSymbol("x"), new LispSymbol("y")])));)
+	
+//	writeln("---\n", eval(parse("((lambda (x) x) plus)"), es), "\n---\n");
+//	writeln("---\n", eval(parse("(cons 1 (q (2 3)))"), es), "\n---\n");
+//	writeln("---\n", eval(parse("(id)"), es).toLispString(), "\n---\n");
+	write(">> ");
+	
+	foreach(string line; lines(stdin)){
+		if (line.strip().length == 0){
+			write(">> ");
+			continue;
+		}
+		
+		try
+			writeln(eval(parse(line), es).toLispString());
+		catch(LispException e)
+			writeln(e.msg);
+		
+		writeln(es);
+		write(">> ");
+	}
+	
+	writeln(es);
 	
 	return 0;
 }
