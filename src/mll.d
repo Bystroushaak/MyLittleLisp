@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.5.0
- * Date:    27.06.2012
+ * Version: 0.5.1
+ * Date:    28.06.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -526,7 +526,6 @@ public LispObject eval(LispObject expr, EnvStack env){
 				}
 			}
 		}
-		
 		return s; // return numeric value
 	}else if ((typeid(expr) == typeid(LispArray)) && // builtin keyword calling;     gimme LispArray
 	           ((parameters = (la = cast(LispArray) expr).getMembers()).length > 0) && // which have one or more members
@@ -562,39 +561,53 @@ public LispObject eval(LispObject expr, EnvStack env){
 			
 			return new LispArray(output);
 		}else if (name == "defl" || name == "defg"){
-			if (parameters.length == 2){
-				if (typeid(parameters[0]) == typeid(LispArray))
-					s = cast(LispSymbol) eval(parameters[0], env);
-				else
-					s = cast(LispSymbol) parameters[0];
-				
-				if (!s)
-					throw new BadTypeOfParametersException("Can't use " ~ s.toLispString() ~ " as idenfiticator!");
-				
-				if (name == "defl")
-					env.addLocalVariable(s, parameters[1]);
-				else
-					env.addGlobal(s, parameters[1]);
-				
-				return s;
-//			}else if (parameters.length == 3){
-			}else
+			if (parameters.length != 2)
 				throw new BadNumberOfParametersException("defl/defg expects two parameters!");
+			
+			// first parameter must be symbol - if parameter is array, try evaluate it to get symbol
+			if (typeid(parameters[0]) == typeid(LispArray))
+				s = cast(LispSymbol) eval(parameters[0], env);
+			else
+				s = cast(LispSymbol) parameters[0];
+			if (!s)
+				throw new BadTypeOfParametersException("Can't use " ~ s.toLispString() ~ " as idenfiticator!");
+			
+			parameters[1] = eval(parameters[1], env);
+			
+			if (name == "defg")
+				env.addGlobal(s, parameters[1]);
+			else
+				env.addLocalVariable(s, parameters[1]);
+			
+			return s;
 		}else if (name == "set!"){
-			if (parameters.length == 2){
-				if (typeid(parameters[0]) == typeid(LispArray))
-					s = cast(LispSymbol) eval(parameters[0], env);
-				else
-					s = cast(LispSymbol) parameters[0];
-				
-				if (!s)
-					throw new BadTypeOfParametersException("Can't use " ~ s.toLispString() ~ " as idenfiticator!");
-				
-				env.set(s, parameters[1]);
-				
-				return s;
-			}else
+			if (parameters.length != 2)
 				throw new BadNumberOfParametersException("set! expects two parameters!");
+			
+			// first parameter must be symbol - if parameter is array, try evaluate it to get symbol
+			if (typeid(parameters[0]) == typeid(LispArray))
+				s = cast(LispSymbol) eval(parameters[0], env);
+			else
+				s = cast(LispSymbol) parameters[0];
+			if (!s)
+				throw new BadTypeOfParametersException("Can't use " ~ s.toLispString() ~ " as idenfiticator!");
+			
+			env.set(s, parameters[1]);
+			
+			return s;
+		}else if (name == "car"){
+			if (parameters.length != 1)
+				throw new BadNumberOfParametersException("car expects only one parameter!");
+				
+			parameters[0] = eval(parameters[0], env);
+			
+			if (typeid(parameters[0]) != typeid(LispArray))
+				throw new BadTypeOfParametersException(parameters[0].toLispString() ~ " is not a list!");
+			
+			if ((la = cast(LispArray) parameters[0]).getMembers().length > 0)
+				return la.getMembers()[0];
+			else
+				return new LispArray();
 		}
 	}
 	
@@ -619,7 +632,8 @@ public LispObject eval(LispObject expr, EnvStack env){
 		LispSymbol[] par_names = env.findSymbolParameters(s);
 		
 		return evalFunctionCall(env.find(s), new LispArray(cast(LispObject[]) par_names), par_values, env);
-	}else */if (typeid(fn) == typeid(LispArray)){ // lambda evaluation
+	}else */
+	if (typeid(fn) == typeid(LispArray)){ // lambda evaluation
 		la = cast(LispArray) fn;
 		parameters = la.getMembers();
 		
@@ -628,9 +642,8 @@ public LispObject eval(LispObject expr, EnvStack env){
 				throw new BadNumberOfParametersException("lambda takes two parameters!"); // lambda, params, body
 			
 			return evalFunctionCall(parameters[2], parameters[1], par_values, env);
-		}else{
+		}else
 			return eval(fn, env);
-		}
 	}
 	
 	throw new UndefinedSymbolException("Undefined symbol or builtin keyword '" ~ fn.toLispString() ~ "'!");
