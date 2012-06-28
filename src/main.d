@@ -54,17 +54,8 @@ int main(string[] args){
 //	Potenciální unittest
 	EnvStack es = new EnvStack();
 	es.addLocal(new LispSymbol("id"), parse("(lambda x x)"));
-	es.addLocal(new LispSymbol("eval"), parse("(lambda x (x))"));
-//	es.addLocal(new LispSymbol("plus", [new LispSymbol("a"), new LispSymbol("b")]), parse("(+ a b)"));
-//	
-	writeln(es);
-//	
-//	writeln("plus:\t\t", es.find(new LispSymbol("plus")));
-//	writeln("plus(x, y):\t", es.find(new LispSymbol("plus", [new LispSymbol("x"), new LispSymbol("y")])));)
 	
-//	writeln("---\n", eval(parse("((lambda (x) x) plus)"), es), "\n---\n");
-//	writeln("---\n", eval(parse("(cons 1 (q (2 3)))"), es), "\n---\n");
-//	writeln("---\n", eval(parse("(id)"), es).toLispString(), "\n---\n");
+	writeln(es);
 	write(">> ");
 	
 	foreach(string line; lines(stdin)){
