@@ -2,7 +2,7 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.6.0
+ * Version: 0.6.1
  * Date:    28.06.2012
  * 
  * Copyright: 
@@ -13,14 +13,18 @@
  *  Preprocesor pro '
  *  Repl smycku s pocitadlem zavorek, teprve pak evalnout.
  *  skipStringsAndFind(char c) 
+ *  Nekonečná přesnost čísel
  *  
  *  Remove var pro EnvStack
 */
 module mll;
 
+import std.bigint;
 import core.exception;
-import std.algorithm : remove;
+
 import std.conv : to;
+import std.algorithm : remove;
+
 
 import std.stdio;		// TODO: Odstranit
 import std.string;
@@ -512,7 +516,37 @@ public LispArray parse(string source){
 		throw new BlankExpressionException("Can't eval blank expression!");
 	
 	return cast(LispArray) (cast(LispArray) parseTree(source, true)[0]).getMembers()[0];
-} 
+}
+
+
+bool isNumeric(LispObject o){
+	LispSymbol s = cast(LispSymbol) o;
+	
+	if (s is null)
+		return false;
+	
+	try{
+		to!int(s.getName());
+	}catch(std.conv.ConvException){
+		try{
+			to!double(s.getName());
+		}catch(std.conv.ConvException){
+			return false;
+		}
+	}
+	
+	return true;
+}
+
+bool isDouble(LispSymbol s){
+	if (!isNumeric(s))
+		return false;
+	
+	if (s.getName().indexOf(",") >= 0 || s.getName().indexOf(".") >= 0)
+		return true;
+	
+	return false;
+}
 
 
 
@@ -707,6 +741,65 @@ public LispObject eval(LispObject expr, EnvStack env){
 				if (! (la && la.getMembers().length == 0)) // == true
 					return eval(cond_params[1], env);
 			}
+		}else if (std.algorithm.indexOf(["+", "-", "*", "/"], name) >= 0){
+			if (parameters.length < 2 && name != "-")
+				throw new BadNumberOfParametersException(name ~ " require at least two parameters!");
+			else if (parameters.length < 1 && name == "-")
+				throw new BadNumberOfParametersException("- requires at least one parameter!");
+			
+			LispSymbol[] args;
+			LispObject o; 
+			foreach(LispObject arg; parameters){
+				o = eval(arg, env);
+				if ((s = cast(LispSymbol) o) is null || !isNumeric(s))
+					throw new BadTypeOfParametersException(name ~ "expects only numbers as parameters!");
+				args ~= s;
+			}
+			
+			int    iresult;
+			double dresult;
+			bool   use_iresult = !isDouble(args[0]);
+			if (use_iresult)
+				iresult = to!int(args[0].getName());
+			else
+				dresult = to!double(args[0].getName());
+			
+			if (args.length == 1 && name == "-")
+				return new LispSymbol(to!string(0 - (use_iresult ? iresult : dresult)));
+			
+			args = args.remove(0);
+			foreach(LispSymbol arg; args){
+				if (use_iresult && arg.isDouble()){
+					dresult = iresult;
+					use_iresult = false;
+				}
+				
+				if (name == "+"){
+					if (use_iresult)
+						iresult += to!int(arg.getName());
+					else
+						dresult += to!double(arg.getName());
+				}else if (name == "-"){
+					if (use_iresult)
+						iresult -= to!int(arg.getName());
+					else
+						dresult -= to!double(arg.getName());
+				}else if (name == "*"){
+					if (use_iresult)
+						iresult *= to!int(arg.getName());
+					else
+						dresult *= to!double(arg.getName());
+				}else if (name == "/"){
+					if (use_iresult)
+						iresult /= to!int(arg.getName());
+					else
+						dresult /= to!double(arg.getName());
+				}
+			}
+			
+			return new LispSymbol(to!string(use_iresult ? iresult : dresult));
+		}else if (std.algorithm.indexOf(["<", "<", "<=", ">="], name) >= 0){
+			checkParamLength(parameters, 2, name);
 		}
 	}
 	
