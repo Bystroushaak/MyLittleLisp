@@ -2,7 +2,7 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.6.1
+ * Version: 0.6.2
  * Date:    28.06.2012
  * 
  * Copyright: 
@@ -741,14 +741,15 @@ public LispObject eval(LispObject expr, EnvStack env){
 				if (! (la && la.getMembers().length == 0)) // == true
 					return eval(cond_params[1], env);
 			}
-		}else if (std.algorithm.indexOf(["+", "-", "*", "/"], name) >= 0){
+		}else if (std.algorithm.indexOf(["+", "-", "*", "/"], name) >= 0){ // arithmetic, wheee
 			if (parameters.length < 2 && name != "-")
 				throw new BadNumberOfParametersException(name ~ " require at least two parameters!");
 			else if (parameters.length < 1 && name == "-")
 				throw new BadNumberOfParametersException("- requires at least one parameter!");
 			
-			LispSymbol[] args;
+			// check if parameters are numbers
 			LispObject o; 
+			LispSymbol[] args;
 			foreach(LispObject arg; parameters){
 				o = eval(arg, env);
 				if ((s = cast(LispSymbol) o) is null || !isNumeric(s))
@@ -756,11 +757,12 @@ public LispObject eval(LispObject expr, EnvStack env){
 				args ~= s;
 			}
 			
-			int    iresult;
+			// double vs int values :3
+			long   iresult;
 			double dresult;
 			bool   use_iresult = !isDouble(args[0]);
 			if (use_iresult)
-				iresult = to!int(args[0].getName());
+				iresult = to!long(args[0].getName());
 			else
 				dresult = to!double(args[0].getName());
 			
@@ -776,30 +778,71 @@ public LispObject eval(LispObject expr, EnvStack env){
 				
 				if (name == "+"){
 					if (use_iresult)
-						iresult += to!int(arg.getName());
+						iresult += to!long(arg.getName());
 					else
 						dresult += to!double(arg.getName());
 				}else if (name == "-"){
 					if (use_iresult)
-						iresult -= to!int(arg.getName());
+						iresult -= to!long(arg.getName());
 					else
 						dresult -= to!double(arg.getName());
 				}else if (name == "*"){
 					if (use_iresult)
-						iresult *= to!int(arg.getName());
+						iresult *= to!long(arg.getName());
 					else
 						dresult *= to!double(arg.getName());
 				}else if (name == "/"){
 					if (use_iresult)
-						iresult /= to!int(arg.getName());
+						iresult /= to!long(arg.getName());
 					else
 						dresult /= to!double(arg.getName());
-				}
+				}else
+					throw new LispException("Goofy please..");
 			}
 			
 			return new LispSymbol(to!string(use_iresult ? iresult : dresult));
-		}else if (std.algorithm.indexOf(["<", "<", "<=", ">="], name) >= 0){
+		}else if (std.algorithm.indexOf(["<", ">", "<=", ">=", "="], name) >= 0){
 			checkParamLength(parameters, 2, name);
+			
+			LispSymbol p1 = cast(LispSymbol) parameters[0];
+			LispSymbol p2 = cast(LispSymbol) parameters[1];
+			
+			if (p1 is null || p2 is null)
+				throw new BadTypeOfParametersException(name ~ " parameters can't be lists!");
+			if (!(isNumeric(p1) && isNumeric(p2)))
+				throw new BadTypeOfParametersException(name ~ " parameters must be numeric!");
+			
+			double n1, n2;
+			n1 = to!double(p1.getName());
+			n2 = to!double(p2.getName());
+			
+			if (name == "<")
+				if (n1 < n2)
+					return new LispArray([new LispSymbol("t")]);
+				else
+					return new LispArray();
+			else if (name == ">")
+				if (n1 > n2)
+					return new LispArray([new LispSymbol("t")]);
+				else
+					return new LispArray();
+			else if (name == "<=")
+				if (n1 <= n2)
+					return new LispArray([new LispSymbol("t")]);
+				else
+					return new LispArray();
+			else if (name == ">=")
+				if (n1 >= n2)
+					return new LispArray([new LispSymbol("t")]);
+				else
+					return new LispArray();
+			else if (name == "=")
+				if (n1 == n2)
+					return new LispArray([new LispSymbol("t")]);
+				else
+					return new LispArray();
+			else 
+				throw new LispException("Goofy please..");
 		}
 	}
 	
