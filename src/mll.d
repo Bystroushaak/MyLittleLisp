@@ -2,7 +2,7 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.6.3
+ * Version: 0.7.0
  * Date:    29.06.2012
  * 
  * Copyright: 
@@ -169,19 +169,11 @@ class LispArray : LispObject{
  * LispSymbol - Object used for representing symbols in parsed tree
 */ 
 class LispSymbol : LispObject{
-	protected string   name;
-	public LispSymbol[] params;
+	private string   name;
 	
 	this(){}
 	this(string name){
 		this.name = name;
-	}
-	this(LispSymbol[] parameters){
-		this.params = parameters;
-	}
-	this(string name, LispSymbol[] parameters){
-		this.name   = name; 
-		this.params = parameters;
 	}
 	
 	public string getName(){
@@ -191,7 +183,7 @@ class LispSymbol : LispObject{
 	// Necesarry when you want to use objects as keys in associative array
 	public override bool opEquals(Object o){
 		LispSymbol s = cast(LispSymbol) o;
-		return s && s.getName() == this.name && s.params.length == this.params.length;
+		return s && s.getName() == this.name;
 	}
 	public override int opCmp(Object o){
 		LispSymbol s = cast(LispSymbol) o;
@@ -201,48 +193,19 @@ class LispSymbol : LispObject{
 			
 		if (!(s && s.opEquals(this) && this.opEquals(s)))
 			return -1;
-
-		return this.params.length - s.params.length;
+		
+		return this.name.length - s.name.length;
 	}
 	public override hash_t toHash(){
-		return this.name.length + this.params.length;
+		return this.name.length;
 	}
 	
 	/// Return lisp representation of this object
 	public string toString(){
-		if (this.params.length == 0) 
-			return this.name;
-		
-		string output = this.name ~ "(";
-		foreach (LispSymbol s; this.params)
-			output ~= to!string(s) ~ " ";
-		
-		// remove space from the end
-		if (this.params.length > 0 && output.length > 1)
-			output.length--;
-		
-		return output ~ ")";
+		return this.name;
 	}
 	public override string toLispString(){
-		string output;
-		
-		if (this.params.length == 0)
-			return this.name;
-		
-		output ~= "(defun "  ~ this.name ~ " (lambda (";
-		
-		foreach (LispSymbol s; this.params)
-			output ~= to!string(s) ~ " ";
-		
-		// remove space from the end
-		if (this.params.length > 0 && output.length > 1)
-			output.length--;
-		
-		output ~= ") (";
-		
-		// TODO: dodělat - výpis těla z EnvStacku
-		
-		return output ~ "))";
+		return this.name;
 	}
 	
 }
@@ -362,21 +325,6 @@ public:
 		
 		throw new UndefinedSymbolException("Undefined symbol '" ~ to!string(key) ~ "'!");
 	}
-	
-	/*LispSymbol[] findSymbolParameters(LispSymbol key){
-		for (int i = local_env.length - 1; i >= 0; i--){
-			foreach(LispSymbol k; local_env[i].keys)
-				if (key == k)
-					return k.params;
-		}
-		
-		foreach(LispSymbol k; global_env.keys)
-			if (key == k)
-				return k.params;
-		
-		throw new UndefinedSymbolException("Undefined function '" ~ to!string(key) ~ "'!");
-	}*/
-	
 	
 	///
 	string toString(){
@@ -605,19 +553,25 @@ public LispObject eval(LispObject expr, EnvStack env){
 		
 		/* Internal keyword definitions *******************************************************************************/
 		if (name == "lambda"){
+			checkParamLength(parameters, 2, "lambda");
 			return expr; // lambdas are returned back, because eval evals them later with args
+		}else if (name == "macro"){
+			checkParamLength(parameters, 2, "macro");
+			return expr; // macros are practically same as lambda
 		}else if (name == "q" || name == "quote"){
 			checkParamLength(parameters, 1, "quote");
 			return parameters[0];
 		}else if (name == "uq" || name == "unquote"){
 			checkParamLength(parameters, 1, "unquote");
 			return eval(new LispArray(parameters), env); // xex, eval really evaluate only lists
-		}else if (name == "qq" || name == "quasiquote"){ // (qq (1 2 (uq (+ 3 4))))
+		}else if (name == "qq" || name == "quasiquote"){
 			LispObject[] output;
 			
+			// eval unquote in quasiquotes
 			if (parameters.length == 2 && (s = cast(LispSymbol) parameters[0]) !is null && (s.getName() == "uq" || s.getName() == "unquote"))
 				return eval(parameters[1], env);
 			
+			// ou yeah, recursively make everything quasiquote
 			foreach(LispObject p; parameters){
 				if (typeid(p) == typeid(LispSymbol))
 					output ~= p;
@@ -847,6 +801,20 @@ public LispObject eval(LispObject expr, EnvStack env){
 			else 
 				throw new LispException("Goofy please..");
 		}
+	}else if ((typeid(expr) == typeid(LispArray)) && // macro call                   // gimme LispArray
+	           ((parameters = (la = cast(LispArray) expr).getMembers()).length > 0) && // which have one or more members
+	           (typeid(parameters[0]) == typeid(LispArray))){                         // and first member is LispArray
+		la = cast(LispArray) parameters[0]; // 
+		if (la.getMembers().length == 3 && (s = cast(LispSymbol) la.getMembers()[0]) !is null && s.getName().toLower() == "macro"){
+			LispObject[] parnames_body = la.getMembers();
+			LispObject[] par_values = parameters.length == 2 ? [cast(LispObject) parameters[1]] : parameters[1 .. $];
+			
+			return evalFunctionCall(parnames_body[2], 
+				                     parnames_body[1], 
+				                     par_values, 
+				                     env, 
+				                     "macro");
+		} // nonmacro keywords fall to eval/lambda evaluation block
 	}
 	
 	// eval every expression in list
@@ -862,15 +830,6 @@ public LispObject eval(LispObject expr, EnvStack env){
 	par_values = par_values.remove(0);
 	
 	/* Executor - thic block executes function calls ******************************************************************/
-	/*if (typeid(fn) == typeid(LispSymbol)){ // named function evaluation
-		s = cast(LispSymbol) fn;
-		foreach(LispObject l; par_values)   // add "parameters" (values are not important, there just have to be same count)
-			s.params ~= new LispSymbol();
-		
-		LispSymbol[] par_names = env.findSymbolParameters(s);
-		
-		return evalFunctionCall(env.find(s), new LispArray(cast(LispObject[]) par_names), par_values, env);
-	}else */
 	if (typeid(fn) == typeid(LispArray)){ // lambda evaluation
 		la = cast(LispArray) fn;
 		parameters = la.getMembers();
@@ -893,7 +852,7 @@ public LispObject eval(LispObject expr, EnvStack env){
  * 
  * This function maps par_names:par_values to enviroment env and then runs the function_body.
 */ 
-private LispObject evalFunctionCall(LispObject function_body, LispObject par_names, LispObject[] par_values, EnvStack env){
+private LispObject evalFunctionCall(LispObject function_body, LispObject par_names, LispObject[] par_values, EnvStack env, string type = "lambda"){
 	LispArray la;
 	LispSymbol s;
 	LispObject[] members;
@@ -906,7 +865,7 @@ private LispObject evalFunctionCall(LispObject function_body, LispObject par_nam
 	if (typeid(par_names) == typeid(LispSymbol)){ // one parameter
 		if (par_values.length != 1)
 			throw new BadNumberOfParametersException(
-				"This lambda expression takes exactly one parameter, not " ~ 
+				"This " ~ type ~ " expression takes exactly one parameter, not " ~ 
 				to!string(par_values.length) ~ "!");
 		
 		env.addLocal(cast(LispSymbol) par_names, par_values[0]);
@@ -917,7 +876,7 @@ private LispObject evalFunctionCall(LispObject function_body, LispObject par_nam
 		// there must be equal number of parameters and their values
 		if (members.length != par_values.length)
 			throw new BadNumberOfParametersException(
-				"This lambda expression expects " ~ to!string(members.length) ~ 
+				"This " ~ type ~ " expression expects " ~ to!string(members.length) ~ 
 				" parameters, not " ~ to!string(par_values.length) ~  "!");
 		
 		// put parameters into lambda environment
@@ -930,7 +889,7 @@ private LispObject evalFunctionCall(LispObject function_body, LispObject par_nam
 			env.addLocal(s, par_values[i]);
 		}
 	}else
-		throw new LispException("Unknown type of parameters for your lambda call - you did some weird shit, didn't you?");
+		throw new LispException("Unknown type of parameters for your " ~ type ~ " call - you did some weird shit, didn't you?");
 	
 	return eval(function_body, env);
 }
@@ -953,16 +912,6 @@ unittest{
 	assert(s1 in aa);
 	assert(s2 in aa);
 	assert(!(s3 in aa));
-	
-	LispSymbol s4 = new LispSymbol("asd");
-	LispSymbol s5 = new LispSymbol("asd", [new LispSymbol("a"), new LispSymbol("b")]);
-	LispSymbol s6 = new LispSymbol("asd", [new LispSymbol("x"), new LispSymbol("y")]);
-	
-	assert(s4 != s5);
-	assert(s4 != s6);
-	
-	assert(s5 == s6);
-	
 	
 	/* findMatchingBracket ********************************************************************************************/
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4)") == -1);
@@ -1011,6 +960,7 @@ unittest{
 	assert(eval(parse("(q (1 23 (trololo la)))"), env).toLispString() == "(1 23 (trololo la))"); // q/quote
 	assert(eval(parse("(cons 1 (q (2 (q 3))))"), env).toLispString() == "(1 2 (q 3))");          // cons
 	assert(eval(parse("(qq (1 2 (uq (+ 3 4))))"), env).toLispString() == "(1 2 7)");
+	assert(eval(parse("((macro (x) (cdr x)) (id 4))"), env).toLispString() == "(4)");
 	
 	//TODO: val
 }
