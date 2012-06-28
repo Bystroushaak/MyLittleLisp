@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.6.2
- * Date:    28.06.2012
+ * Version: 0.6.3
+ * Date:    29.06.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -574,7 +574,7 @@ public LispObject eval(LispObject expr, EnvStack env){
 			return env.find(s); // return saved value
 		}catch(UndefinedSymbolException e){
 			try{
-				to!int(s.getName());
+				to!long(s.getName());
 			}catch(std.conv.ConvException){
 				try{
 					to!double(s.getName());
@@ -584,7 +584,7 @@ public LispObject eval(LispObject expr, EnvStack env){
 			}
 		}
 		return s; // return numeric value
-	}else if ((typeid(expr) == typeid(LispArray)) && // builtin keyword calling;     gimme LispArray
+	}else if ((typeid(expr) == typeid(LispArray)) && // builtin keyword calling;        gimme LispArray
 	           ((parameters = (la = cast(LispArray) expr).getMembers()).length > 0) && // which have one or more members
 	           (typeid(parameters[0]) == typeid(LispSymbol))                       ){ // and first member is LispSymbol
 		// save useful information
@@ -608,8 +608,28 @@ public LispObject eval(LispObject expr, EnvStack env){
 			return expr; // lambdas are returned back, because eval evals them later with args
 		}else if (name == "q" || name == "quote"){
 			checkParamLength(parameters, 1, "quote");
-			
 			return parameters[0];
+		}else if (name == "uq" || name == "unquote"){
+			checkParamLength(parameters, 1, "unquote");
+			return eval(new LispArray(parameters), env); // xex, eval really evaluate only lists
+		}else if (name == "qq" || name == "quasiquote"){ // (qq (1 2 (uq (+ 3 4))))
+			LispObject[] output;
+			
+			if (parameters.length == 2 && (s = cast(LispSymbol) parameters[0]) !is null && (s.getName() == "uq" || s.getName() == "unquote"))
+				return eval(parameters[1], env);
+			
+			foreach(LispObject p; parameters){
+				if (typeid(p) == typeid(LispSymbol))
+					output ~= p;
+				else{
+					la = cast(LispArray) p;
+					output ~= eval(new LispArray([cast(LispObject) new LispSymbol("qq")] ~ la.getMembers()), env);
+				}
+			}
+			
+			return new LispArray(output);
+		}else if (name == "list"){
+			return new LispArray(parameters);
 		}else if (name == "cons"){
 			checkParamLength(parameters, 2, "cons");
 			
@@ -696,15 +716,13 @@ public LispObject eval(LispObject expr, EnvStack env){
 			if (s is null)
 				return new LispArray();
 			
-			try{
+			try
 				to!int(s.getName());
-			}catch(std.conv.ConvException){
-				try{
+			catch(std.conv.ConvException)
+				try
 					to!double(s.getName());
-				}catch(std.conv.ConvException){
+				catch(std.conv.ConvException)
 					return new LispArray();
-				}
-			}
 			
 			return new LispArray([new LispSymbol("t")]); 
 		}else if (name == "null?"){
@@ -817,30 +835,15 @@ public LispObject eval(LispObject expr, EnvStack env){
 			n2 = to!double(p2.getName());
 			
 			if (name == "<")
-				if (n1 < n2)
-					return new LispArray([new LispSymbol("t")]);
-				else
-					return new LispArray();
+				return (n1 < n2 ? new LispArray([new LispSymbol("t")]) : new LispArray());
 			else if (name == ">")
-				if (n1 > n2)
-					return new LispArray([new LispSymbol("t")]);
-				else
-					return new LispArray();
+				return (n1 > n2 ? new LispArray([new LispSymbol("t")]) : new LispArray());
 			else if (name == "<=")
-				if (n1 <= n2)
-					return new LispArray([new LispSymbol("t")]);
-				else
-					return new LispArray();
+				return (n1 <= n2 ? new LispArray([new LispSymbol("t")]) : new LispArray());
 			else if (name == ">=")
-				if (n1 >= n2)
-					return new LispArray([new LispSymbol("t")]);
-				else
-					return new LispArray();
+				return (n1 >= n2 ? new LispArray([new LispSymbol("t")]) : new LispArray());
 			else if (name == "=")
-				if (n1 == n2)
-					return new LispArray([new LispSymbol("t")]);
-				else
-					return new LispArray();
+				return (n1 == n2 ? new LispArray([new LispSymbol("t")]) : new LispArray());
 			else 
 				throw new LispException("Goofy please..");
 		}
@@ -1007,9 +1010,9 @@ unittest{
 	EnvStack env = new EnvStack();
 	assert(eval(parse("(q (1 23 (trololo la)))"), env).toLispString() == "(1 23 (trololo la))"); // q/quote
 	assert(eval(parse("(cons 1 (q (2 (q 3))))"), env).toLispString() == "(1 2 (q 3))");          // cons
+	assert(eval(parse("(qq (1 2 (uq (+ 3 4))))"), env).toLispString() == "(1 2 7)");
 	
 	//TODO: val
-	
 }
 
 
