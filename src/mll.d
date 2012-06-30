@@ -16,6 +16,7 @@
  *  Nekonečná přesnost čísel
  *  
  *  Remove var pro EnvStack
+ *  Přetížit opEquals pro lisp symbol a odstranit getName()
 */
 module mll;
 
@@ -28,6 +29,9 @@ import std.algorithm : remove;
 
 import std.stdio;		// TODO: Odstranit
 import std.string;
+
+
+const string INF_PARAMS = "...";
 
 
 /* Exceptions **********************************************************************************************************
@@ -862,34 +866,47 @@ private LispObject evalFunctionCall(LispObject function_body, LispObject par_nam
 		env.popLevel();
 	}
 	
-	if (typeid(par_names) == typeid(LispSymbol)){ // one parameter
-		if (par_values.length != 1)
-			throw new BadNumberOfParametersException(
-				"This " ~ type ~ " expression takes exactly one parameter, not " ~ 
-				to!string(par_values.length) ~ "!");
+	if ((s = cast(LispSymbol) par_names) !is null){ // one parameter
+		if (s.getName() == INF_PARAMS){
+			env.addLocal(s, new LispArray(par_values));
+		}else{
+			if (par_values.length != 1)
+				throw new BadNumberOfParametersException(
+					"This " ~ type ~ " expression takes exactly one parameter, not " ~ 
+					to!string(par_values.length) ~ "!");
 		
-		env.addLocal(cast(LispSymbol) par_names, par_values[0]);
+			env.addLocal(s, par_values[0]);
+		}
 	}else if (typeid(par_names) == typeid(LispArray)){ // multiple parameters
 		la = cast(LispArray) par_names;
 		members = la.getMembers();
 		
 		// there must be equal number of parameters and their values
-		if (members.length != par_values.length)
+		if (members.length > par_values.length)
 			throw new BadNumberOfParametersException(
 				"This " ~ type ~ " expression expects " ~ to!string(members.length) ~ 
 				" parameters, not " ~ to!string(par_values.length) ~  "!");
 		
 		// put parameters into lambda environment
 		for(int i = 0; i < members.length; i++){
+			if (i >= members.length)
+				throw new BadNumberOfParametersException("Not enough parameters for this " ~ type ~ " call!");
+			if (i >= par_values.length)
+				throw new BadNumberOfParametersException("Too many parameters for this " ~ type ~ " call!");
+				
 			s = cast(LispSymbol) members[i];
 			
 			if (!s)
-				throw new LispException("Parameter names must be symbols, not arrays!");
+				throw new BadTypeOfParametersException("Parameter names must be symbols, not lists!");
 			
-			env.addLocal(s, par_values[i]);
+			if (s.getName() == INF_PARAMS){
+				env.addLocal(s, (i < par_values.length - 1 ? new LispArray(par_values[i .. $]) : par_values[i]));
+				break;
+			}else
+				env.addLocal(s, par_values[i]);
 		}
 	}else
-		throw new LispException("Unknown type of parameters for your " ~ type ~ " call - you did some weird shit, didn't you?");
+		throw new BadTypeOfParametersException("Unknown type of parameters for your " ~ type ~ " call - you did some weird shit, didn't you?");
 	
 	return eval(function_body, env);
 }
@@ -961,6 +978,8 @@ unittest{
 	assert(eval(parse("(cons 1 (q (2 (q 3))))"), env).toLispString() == "(1 2 (q 3))");          // cons
 	assert(eval(parse("(qq (1 2 (uq (+ 3 4))))"), env).toLispString() == "(1 2 7)");
 	assert(eval(parse("((macro (x) (cdr x)) (id 4))"), env).toLispString() == "(4)");
+	assert(eval(parse("((lambda " ~ INF_PARAMS ~ " (car (cdr " ~ INF_PARAMS ~ "))) 1 2 3)"), env).toLispString() == "2");
+	assert(eval(parse("((lambda (a " ~ INF_PARAMS ~ ") (cons a (car (cdr " ~ INF_PARAMS ~ ")))) (q first) 1 2 3)"), env).toLispString() == "(first 2)");
 	
 	//TODO: val
 }
