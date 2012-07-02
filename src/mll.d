@@ -2,15 +2,14 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.7.0
- * Date:    29.06.2012
+ * Version: 0.8.0
+ * Date:    03.07.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
  *     http://creativecommons.org/licenses/by/3.0/
  * 
  * TODO:
- *  Preprocesor pro '
  *  Repl smycku s pocitadlem zavorek, teprve pak evalnout.
  *  skipStringsAndFind(char c) 
  *  Nekonečná přesnost čísel
@@ -20,7 +19,7 @@
 */
 module mll;
 
-import std.bigint;
+import std.string;
 import core.exception;
 
 import std.conv : to;
@@ -28,13 +27,15 @@ import std.algorithm : remove;
 
 
 import std.stdio;		// TODO: Odstranit
-import std.string;
 
 
 const string INF_PARAMS = "...";
+enum string[char] quoters = ['\'':"quote", '`':"quasiquote", ',':"unquote"];
 
 
-/* Exceptions **********************************************************************************************************
+/***********************************************************************************************************************
+* Exceptions ***********************************************************************************************************
+ ***********************************************************************************************************************
  * Exception tree:
  *
  *   Exception
@@ -84,7 +85,9 @@ class BadTypeOfParametersException : LispException{
 
 
 
-/* Objects ************************************************************************************************************/
+/***********************************************************************************************************************
+* Objects **************************************************************************************************************
+***********************************************************************************************************************/
 /// Generic object used for representation everything in my little lisp.
 class LispObject{
 	public string toString(){
@@ -211,7 +214,6 @@ class LispSymbol : LispObject{
 	public override string toLispString(){
 		return this.name;
 	}
-	
 }
 
 
@@ -343,8 +345,17 @@ public:
 		
 		return output;
 	}
+	
+	string toLispString(){
+		string output = "((local (\n";
+		
+		for (int i = local_env.length - 1; i >= 0; i--){
+			output ~= "\t(q (" ~ to!string(i) ~ "))\n";
+		}
+		
+		return output;
+	}
 }
-
 
 
 
@@ -402,7 +413,7 @@ private LispObject[] parseTree(string source, bool first){
 	
 	source = source.strip();
 	
-	if (source.length > 0 && source[0] != '(' && first)
+	if (source.length > 0 && std.algorithm.indexOf(['\'', '`', ',', '('], source[0]) < 0 && first)
 		throw new ParseException("Invalid expression.\nCorrect expressions starts with '(', not with '" ~ source[0] ~ "'!");
 	
 	// create dom tree
@@ -455,6 +466,59 @@ private LispObject[] parseTree(string source, bool first){
 }
 
 
+
+/**
+ * Convert lisp tree from parse() with syntax sugar `', to clear lisp containing only quasiquote, quote and unquote.
+*/ 
+LispObject sugarToRealLisp(LispObject o){
+	LispArray  a;
+	LispSymbol s;
+	string name;
+	
+	if ((s = cast(LispSymbol) o) !is null){ // symbols quotation
+		name = s.getName();
+		
+		if (name.length > 1 && std.algorithm.indexOf(['\'', '`', ','], name[0]) >= 0){ // if symbol starts with quoter
+			return new LispArray([new LispSymbol(quoters[name[0]]), new LispSymbol(name.length > 2 ? name[1 .. $] : "" ~ name[1])]);
+		}else if (std.algorithm.indexOf(['\'', '`', ','], name[0]) >= 0) // symbol IS quoter
+			throw new ParseException("Misplaced quoter >" ~ name ~ "< - quoters can't be used as symbols!");
+		else
+			return o;
+	}else if ((a = cast(LispArray) o) !is null){ // arays quotation
+		LispArray output = new LispArray();
+		LispObject[] members = a.getMembers();
+		
+		LispObject m;
+		for(int i = 0; i < members.length; i++){
+			m = members[i];
+			if ((s = cast(LispSymbol) m) !is null){
+				name = s.getName();
+				
+				// quote array
+				if (name.length == 1 && std.algorithm.indexOf(['\'', '`', ','], name[0]) >= 0){ // quoter before array
+					if (i + 1 <= members.length - 1){
+						if ((a = cast(LispArray) members[i + 1]) !is null){
+							output.members ~= new LispArray([new LispSymbol(quoters[name[0]]), sugarToRealLisp(a)]);
+							i += 2;
+						}else // quoter at the and of list
+							throw new ParseException("Misplaced quoter >" ~ name ~ "< - quoters can't be used as symbols!");
+					}else
+						throw new ParseException("Misplaced quoter >" ~ name ~ "< - quoters can't be used as symbols!");
+				}else
+					output.members ~= sugarToRealLisp(m);
+			}else if ((a = cast(LispArray) m) !is null) // arrays are recursively quoted 
+				output.members ~= sugarToRealLisp(m);
+			else
+				throw new ParseException("Can't remove sugar - LispObject is not supported in arrays!");
+		}
+		
+		return output;
+	}else 
+		throw new ParseException("Can't remove sugar - LispObject is not supported!");
+}
+
+
+
 /**
  * Parse lisp source code to in-memory tree of symbols.
  * 
@@ -464,11 +528,17 @@ private LispObject[] parseTree(string source, bool first){
  *
 */ 
 public LispArray parse(string source){
-	if (source.strip().length == 0)
-		throw new BlankExpressionException("Can't eval blank expression!");
+	source = source.strip();
+	if (source.length == 0)
+		return new LispArray();
 	
-	return cast(LispArray) (cast(LispArray) parseTree(source, true)[0]).getMembers()[0];
+	if (std.algorithm.indexOf(['\'', '`', ','], source[0]) >= 0)
+		return cast(LispArray) (cast(LispArray) parseTree("(" ~ source ~ ")", true)[0]).getMembers()[0];
+	else
+		return cast(LispArray) (cast(LispArray) parseTree(source, true)[0]).getMembers()[0];
 }
+
+
 
 
 bool isNumeric(LispObject o){
@@ -489,7 +559,6 @@ bool isNumeric(LispObject o){
 	
 	return true;
 }
-
 bool isDouble(LispSymbol s){
 	if (!isNumeric(s))
 		return false;
@@ -861,6 +930,7 @@ private LispObject evalFunctionCall(LispObject function_body, LispObject par_nam
 	LispSymbol s;
 	LispObject[] members;
 	
+	// create local namespace for variables
 	env.pushLevel();
 	scope(exit){
 		env.popLevel();
@@ -950,6 +1020,16 @@ unittest{
 	testParseWithBothStrings("(a  (     b  )   	)", "[a, [b]]", "(a (b))");
 	testParseWithBothStrings("((((()))))", "[[[[[]]]]]", "()");
 	testParseWithBothStrings("(a (b (c (d (e)))))", "[a, [b, [c, [d, [e]]]]]", "(a (b (c (d (e)))))");
+	
+	
+	/* sugarToRealLisp ************************************************************************************************/
+	void testSugarToRealLisp(string sugar, string lisp){
+		assert(sugarToRealLisp(parse(sugar)).toLispString() == lisp);
+	}
+	testSugarToRealLisp("'()", "(" ~ quoters['\''] ~ " ())");
+	testSugarToRealLisp("`()", "(" ~ quoters['`'] ~ " ())");
+	testSugarToRealLisp(",()", "(" ~ quoters[','] ~ " ())");
+	testSugarToRealLisp("`(1 2 ,(+ 3 4))", "(" ~ quoters['`'] ~ " (1 2 (" ~ quoters[','] ~ " (+ 3 4))))");
 	
 	
 	/* EnvStack *******************************************************************************************************/
