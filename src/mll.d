@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.8.0
- * Date:    03.07.2012
+ * Version: 0.9.0
+ * Date:    04.07.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -30,12 +30,24 @@ import std.stdio;		// TODO: Odstranit
 
 
 const string INF_PARAMS = "...";
-enum string[char] quoters = ['\'':"quote", '`':"quasiquote", ',':"unquote"];
+
+static enum string[char] quoters = ['\'':"quote", '`':"quasiquote", ',':"unquote"];
+// generate asoc. array reverse_quoters which have keys from quoters as values
+private string genReverseQuoters(){
+	string r_quoters = "static enum char[string] reverse_quoters = [";
+	foreach(char key, string val; quoters){
+		r_quoters ~= '"' ~ val ~ "\":'"  ~ (key == '\'' ? "\\'" : "" ~ key) ~ "', ";
+	}
+	
+	return r_quoters ~ "];";
+}
+mixin(genReverseQuoters()); 
 
 
-/***********************************************************************************************************************
-* Exceptions ***********************************************************************************************************
- ***********************************************************************************************************************
+
+/*******************************************************************************
+* Exceptions *******************************************************************
+ *******************************************************************************
  * Exception tree:
  *
  *   Exception
@@ -85,9 +97,9 @@ class BadTypeOfParametersException : LispException{
 
 
 
-/***********************************************************************************************************************
-* Objects **************************************************************************************************************
-***********************************************************************************************************************/
+/*******************************************************************************
+* Objects **********************************************************************
+*******************************************************************************/
 /// Generic object used for representation everything in my little lisp.
 class LispObject{
 	public string toString(){
@@ -107,6 +119,15 @@ class LispObject{
 		
 		throw new Exception("Unimplemented : toLispString() for LispObject");
 	}
+	
+	public string toSugar(){
+		if (typeid(this) == typeid(LispArray))
+			return (cast(LispArray) this).toSugar();
+		else if (typeid(this) == typeid(LispSymbol))
+			return (cast(LispSymbol) this).toLispString();
+		
+		throw new Exception("Unimplemented : toSugar() for LispObject");
+	}
 }
 
 
@@ -120,8 +141,8 @@ class LispArray : LispObject{
 		this.members = members;
 	}
 	
-	// I didn't wanted to do this, but dmd forced me :( -> "Error: need 'this' to access member members" when calling
-	// la.members[0]
+	// I didn't wanted to do this, but dmd forced me :( -> "Error: need 'this' 
+	// to access member members" when calling la.members[0]
 	public LispObject[] getMembers(){
 		return members.dup;
 	}
@@ -130,15 +151,56 @@ class LispArray : LispObject{
 	public string toLispString(){
 		string output;
 		
-		foreach(LispObject member; this.members){
+		foreach(LispObject member; this.members)
 			output ~= member.toLispString() ~ " ";
-		}
 		// remove space from the end of last object
 		if (output.length >= 2)
 			output.length--;
 		
 		// do not add () to top level object which contains whole dom
-		if (! (members.length == 1 && typeid(this.members[0]) == typeid(LispArray)))
+		if (! (this.members.length == 1 && typeid(this.members[0]) == typeid(LispArray)))
+			output = "(" ~ output ~ ")";
+		
+		return output;
+	}
+
+	/// Converts lisp tree of list expression to string with syntax sugar
+	public override string toSugar(){
+		string output;
+		
+		LispArray a;
+		LispSymbol s;
+		LispObject o;
+		LispObject[] members;
+		for(int i = 0; i < this.members.length; i++){
+			o =  this.members[i];
+			if ((a = cast(LispArray) o) !is null &&                              // lisp array
+			    (s = cast(LispSymbol) (members = a.getMembers())[0]) !is null && // with first member LispSymbol
+			    s.getName() in reverse_quoters){                                  // which name is in quoters
+				
+				// remove clean lisp quoters and replace it with character
+				// representation from reverse_quoters
+				members = a.getMembers();
+				for(int j = 0; j < members.length; j++){
+					string name = s.getName();
+					if (j + 1 < members.length){
+						output ~= reverse_quoters[name] ~ members[j + 1].toSugar() ~ " ";
+						j += 2;
+					}else{
+						output ~= o.toSugar() ~ " ";
+						break;
+					}
+				}
+			}else
+				output ~= o.toSugar() ~ " ";
+		}
+		
+		// remove space from the end of last object
+		if (output.length >= 2)
+			output.length--;
+		
+		// do not add () to top level object which contains whole dom
+		if (! (this.members.length == 1 && typeid(this.members[0]) == typeid(LispArray)))
 			output = "(" ~ output ~ ")";
 		
 		return output;
@@ -214,6 +276,9 @@ class LispSymbol : LispObject{
 	public override string toLispString(){
 		return this.name;
 	}
+	public override string toSugar(){
+		return this.name;
+	}
 }
 
 
@@ -233,7 +298,8 @@ public:
 	}
 	
 	/**
-	 * Create new blank level of variable stack - used for multiple levels of local variables.
+	 * Create new blank level of variable stack - used for multiple levels of 
+	 * local variables.
 	*/ 
 	void pushLevel(){
 		LispObject[LispSymbol] le;
@@ -255,7 +321,8 @@ public:
 	}
 	
 	/**
-	 * Add new local (temporary) variable - this is used for mapping function arguments to local namespace.
+	 * Add new local (temporary) variable - this is used for mapping function 
+	 * arguments to local namespace.
 	*/ 
 	void addLocal(LispSymbol key, LispObject value){
 			this.local_env[$ - 1][key] = value;
@@ -264,8 +331,9 @@ public:
 	/** 
 	 * Add new local variable.
 	 * 
-	 * This function puts variables one level higher than addLocal()'(a v bh, so they survive definition (which happens in 
-	 * its own separate namespace, because every eval() call creates one).
+	 * This function puts variables one level higher than addLocal()'(a v bh, so 
+	 * they survive definition (which happens in its own separate namespace, 
+	 * because every eval() call creates one).
 	 * 
 	 * Variables could be type of LispSymbol or LispList.
 	*/ 
@@ -359,14 +427,16 @@ public:
 
 
 
-/***********************************************************************************************************************
-* Functions ************************************************************************************************************
-***********************************************************************************************************************/
+/*******************************************************************************
+* Functions ********************************************************************
+*******************************************************************************/
 /**
- * FindMatchingBracket - function, which go thru source and returns first matching bracket.
+ * FindMatchingBracket - function, which go thru source and returns first
+ * matching bracket.
  * 
  * Params:
- * 	source = Lisp source, which MUST begins with bracket, which will used as opening bracket for search.
+ *  source = Lisp source, which MUST begins with bracket, which will used as 
+ *  opening bracket for search.
  *
  * TODO:
  *  Add support for builtin strings
@@ -468,7 +538,8 @@ private LispObject[] parseTree(string source, bool first){
 
 
 /**
- * Convert lisp tree from parse() with syntax sugar `', to clear lisp containing only quasiquote, quote and unquote.
+ * Convert lisp tree from parse() with syntax sugar `', to clear lisp containing 
+ * only quasiquote, quote and unquote.
 */ 
 LispObject sugarToRealLisp(LispObject o){
 	LispArray  a;
@@ -590,7 +661,8 @@ public LispObject eval(LispObject expr, EnvStack env){
 	if (typeid(expr) == typeid(LispSymbol)){ // handle variables
 		s = cast(LispSymbol) expr;
 		
-		// look to the symbol table, return saved value, numeric value, or throw error, if expr is not value/number
+		// look to the symbol table, return saved value, numeric value, or throw 
+		// error, if expr is not value/number
 		try{
 			return env.find(s); // return saved value
 		}catch(UndefinedSymbolException e){
@@ -624,7 +696,7 @@ public LispObject eval(LispObject expr, EnvStack env){
 				                                          " parameters, not " ~ to!string(parameters.length) ~ "!");
 		}
 		
-		/* Internal keyword definitions *******************************************************************************/
+		/* Internal keyword definitions ***************************************/
 		if (name == "lambda"){
 			checkParamLength(parameters, 2, "lambda");
 			return expr; // lambdas are returned back, because eval evals them later with args
@@ -902,12 +974,13 @@ public LispObject eval(LispObject expr, EnvStack env){
 	LispObject fn = par_values[0];
 	par_values = par_values.remove(0);
 	
-	/* Executor - thic block executes function calls ******************************************************************/
+	/* Executor - thic block executes function calls **************************/
 	if (typeid(fn) == typeid(LispArray)){ // lambda evaluation
 		la = cast(LispArray) fn;
 		parameters = la.getMembers();
 		
-		if (parameters.length > 0 && typeid(parameters[0]) == typeid(LispSymbol) && (s = cast(LispSymbol) parameters[0]).getName().toLower() == "lambda"){
+		// check if you can find (lambda 
+		if (parameters.length > 0 && (s = cast(LispSymbol) parameters[0]) !is null && s.getName().toLower() == "lambda"){
 			if (parameters.length != 3)
 				throw new BadNumberOfParametersException("lambda takes two parameters!"); // lambda, params, body
 			
@@ -925,7 +998,11 @@ public LispObject eval(LispObject expr, EnvStack env){
  * 
  * This function maps par_names:par_values to enviroment env and then runs the function_body.
 */ 
-private LispObject evalFunctionCall(LispObject function_body, LispObject par_names, LispObject[] par_values, EnvStack env, string type = "lambda"){
+private LispObject evalFunctionCall(LispObject function_body, 
+                                     LispObject par_names, 
+                                     LispObject[] par_values, 
+                                     EnvStack env, 
+                                     string type = "lambda"){ // used just for error msgs
 	LispArray la;
 	LispSymbol s;
 	LispObject[] members;
@@ -983,9 +1060,9 @@ private LispObject evalFunctionCall(LispObject function_body, LispObject par_nam
 
 
 
-/* Unittests **********************************************************************************************************/
+/* Unittests ******************************************************************/
 unittest{
-	/* LispSymbol *****************************************************************************************************/
+	/* LispSymbol *************************************************************/
 	LispSymbol s1 = new LispSymbol("asd");
 	LispSymbol s2 = new LispSymbol("asd");
 	LispSymbol s3 = new LispSymbol("bsd");
@@ -1000,16 +1077,16 @@ unittest{
 	assert(s2 in aa);
 	assert(!(s3 in aa));
 	
-	/* findMatchingBracket ********************************************************************************************/
+	/* findMatchingBracket ****************************************************/
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4)") == -1);
 	assert(findMatchingBracket("(cons 1 (cons (q (2 3)) 4))") == "(cons 1 (cons (q (2 3)) 4))".length);
 	
 	
-	/* splitSymbols ***************************************************************************************************/
+	/* splitSymbols ***********************************************************/
 	assert(splitSymbols("a b") == ["a", "b"]);
 	
 	
-	/* parse **********************************************************************************************************/
+	/* parse ******************************************************************/
 	void testParseWithBothStrings(string expr, string d_result, string lisp_result){
 		assert(parse(expr).toString()     == d_result);
 		assert(parse(expr).toLispString() == lisp_result);
@@ -1019,20 +1096,31 @@ unittest{
 	testParseWithBothStrings("(a (b))", "[a, [b]]", "(a (b))");
 	testParseWithBothStrings("(a  (     b  )   	)", "[a, [b]]", "(a (b))");
 	testParseWithBothStrings("((((()))))", "[[[[[]]]]]", "()");
-	testParseWithBothStrings("(a (b (c (d (e)))))", "[a, [b, [c, [d, [e]]]]]", "(a (b (c (d (e)))))");
+	testParseWithBothStrings("(a (b (c (d (e)))))",
+	                         "[a, [b, [c, [d, [e]]]]]",
+	                         "(a (b (c (d (e)))))");
 	
 	
-	/* sugarToRealLisp ************************************************************************************************/
+	/* sugarToRealLisp ********************************************************/
 	void testSugarToRealLisp(string sugar, string lisp){
 		assert(sugarToRealLisp(parse(sugar)).toLispString() == lisp);
 	}
 	testSugarToRealLisp("'()", "(" ~ quoters['\''] ~ " ())");
 	testSugarToRealLisp("`()", "(" ~ quoters['`'] ~ " ())");
 	testSugarToRealLisp(",()", "(" ~ quoters[','] ~ " ())");
-	testSugarToRealLisp("`(1 2 ,(+ 3 4))", "(" ~ quoters['`'] ~ " (1 2 (" ~ quoters[','] ~ " (+ 3 4))))");
+	testSugarToRealLisp("`(1 2 ,(+ 3 4))", "(" ~ quoters['`'] ~ 
+	                    " (1 2 (" ~ quoters[','] ~ " (+ 3 4))))");
 	
 	
-	/* EnvStack *******************************************************************************************************/
+	/* realLispToSugar ********************************************************/
+	void testRealLispToSugar(string sugar){
+		assert(sugar == sugarToRealLisp(parse(sugar)).toSugar());
+	}
+	testRealLispToSugar("'()");
+	testRealLispToSugar("`(1 2 ,(+ 3 4))");
+	
+	
+	/* EnvStack ***************************************************************/
 	EnvStack es = new EnvStack();
 	
 	// check global environment
@@ -1052,7 +1140,7 @@ unittest{
 	es.popLevel();
 	assert(es.find(new LispSymbol("plus")).toString() == parse("(++ 1 2)").toString());
 	
-	/* Eval ***********************************************************************************************************/
+	/* Eval *******************************************************************/
 	EnvStack env = new EnvStack();
 	assert(eval(parse("(q (1 23 (trololo la)))"), env).toLispString() == "(1 23 (trololo la))"); // q/quote
 	assert(eval(parse("(cons 1 (q (2 (q 3))))"), env).toLispString() == "(1 2 (q 3))");          // cons
@@ -1060,8 +1148,6 @@ unittest{
 	assert(eval(parse("((macro (x) (cdr x)) (id 4))"), env).toLispString() == "(4)");
 	assert(eval(parse("((lambda " ~ INF_PARAMS ~ " (car (cdr " ~ INF_PARAMS ~ "))) 1 2 3)"), env).toLispString() == "2");
 	assert(eval(parse("((lambda (a " ~ INF_PARAMS ~ ") (cons a (car (cdr " ~ INF_PARAMS ~ ")))) (q first) 1 2 3)"), env).toLispString() == "(first 2)");
-	
-	//TODO: val
 }
 
 
