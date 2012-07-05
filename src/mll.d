@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.9.0
- * Date:    04.07.2012
+ * Version: 0.9.1
+ * Date:    05.07.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -170,37 +170,32 @@ class LispArray : LispObject{
 		
 		LispArray a;
 		LispSymbol s;
-		LispObject o;
 		LispObject[] members;
-		for(int i = 0; i < this.members.length; i++){
-			o =  this.members[i];
-			if ((a = cast(LispArray) o) !is null &&                              // lisp array
-			    (s = cast(LispSymbol) (members = a.getMembers())[0]) !is null && // with first member LispSymbol
-			    s.getName() in reverse_quoters){                                  // which name is in quoters
-				
-				// remove clean lisp quoters and replace it with character
-				// representation from reverse_quoters
-				members = a.getMembers();
-				for(int j = 0; j < members.length; j++){
-					string name = s.getName();
-					if (j + 1 < members.length){
-						output ~= reverse_quoters[name] ~ members[j + 1].toSugar() ~ " ";
-						j += 2;
-					}else{
-						output ~= o.toSugar() ~ " ";
-						break;
-					}
-				}
-			}else
+		
+		if (this.members.length > 0 &&
+		    (s = cast(LispSymbol) this.members[0]) !is null &&  // first member LispSymbol
+		    s.getName() in reverse_quoters){                     // which name is in quoters
+			
+			// remove clean lisp quoters and replace it with character
+			// representation from reverse_quoters
+			for(int j = 0; j < this.members.length; j++){
+				string name = s.getName();
+				if (j + 1 < this.members.length){
+					output ~= reverse_quoters[name] ~ this.members[j + 1].toSugar() ~ " ";
+					j += 2;
+				}else
+					output ~= this.members[j].toSugar() ~ " ";
+			}
+		}else
+			foreach(LispObject o; this.members)
 				output ~= o.toSugar() ~ " ";
-		}
 		
 		// remove space from the end of last object
 		if (output.length >= 2)
 			output.length--;
 		
 		// do not add () to top level object which contains whole dom
-		if (! (this.members.length == 1 && typeid(this.members[0]) == typeid(LispArray)))
+		if (! (output.length > 0 && std.algorithm.indexOf(quoters.keys(), output[0]) >= 0))
 			output = "(" ~ output ~ ")";
 		
 		return output;
@@ -483,7 +478,7 @@ private LispObject[] parseTree(string source, bool first){
 	
 	source = source.strip();
 	
-	if (source.length > 0 && std.algorithm.indexOf(['\'', '`', ',', '('], source[0]) < 0 && first)
+	if (source.length > 0 && std.algorithm.indexOf(quoters.keys() ~ '(', source[0]) < 0 && first)
 		throw new ParseException("Invalid expression.\nCorrect expressions starts with '(', not with '" ~ source[0] ~ "'!");
 	
 	// create dom tree
@@ -545,19 +540,20 @@ LispObject sugarToRealLisp(LispObject o){
 	LispArray  a;
 	LispSymbol s;
 	string name;
+	LispObject[] members;
 	
 	if ((s = cast(LispSymbol) o) !is null){ // symbols quotation
 		name = s.getName();
 		
-		if (name.length > 1 && std.algorithm.indexOf(['\'', '`', ','], name[0]) >= 0){ // if symbol starts with quoter
+		if (name.length > 1 && std.algorithm.indexOf(quoters.keys(), name[0]) >= 0){ // if symbol starts with quoter
 			return new LispArray([new LispSymbol(quoters[name[0]]), new LispSymbol(name.length > 2 ? name[1 .. $] : "" ~ name[1])]);
-		}else if (std.algorithm.indexOf(['\'', '`', ','], name[0]) >= 0) // symbol IS quoter
+		}else if (std.algorithm.indexOf(quoters.keys(), name[0]) >= 0) // symbol IS quoter
 			throw new ParseException("Misplaced quoter >" ~ name ~ "< - quoters can't be used as symbols!");
 		else
 			return o;
 	}else if ((a = cast(LispArray) o) !is null){ // arays quotation
 		LispArray output = new LispArray();
-		LispObject[] members = a.getMembers();
+		members = a.getMembers();
 		
 		LispObject m;
 		for(int i = 0; i < members.length; i++){
@@ -566,7 +562,7 @@ LispObject sugarToRealLisp(LispObject o){
 				name = s.getName();
 				
 				// quote array
-				if (name.length == 1 && std.algorithm.indexOf(['\'', '`', ','], name[0]) >= 0){ // quoter before array
+				if (name.length == 1 && std.algorithm.indexOf(quoters.keys(), name[0]) >= 0){ // quoter before array
 					if (i + 1 <= members.length - 1){
 						if ((a = cast(LispArray) members[i + 1]) !is null){
 							output.members ~= new LispArray([new LispSymbol(quoters[name[0]]), sugarToRealLisp(a)]);
@@ -583,6 +579,9 @@ LispObject sugarToRealLisp(LispObject o){
 				throw new ParseException("Can't remove sugar - LispObject is not supported in arrays!");
 		}
 		
+		if ((members = output.getMembers()).length == 1 && typeid(members[0]) == typeid(LispArray))
+			return members[0];
+			
 		return output;
 	}else 
 		throw new ParseException("Can't remove sugar - LispObject is not supported!");
@@ -603,7 +602,7 @@ public LispArray parse(string source){
 	if (source.length == 0)
 		return new LispArray();
 	
-	if (std.algorithm.indexOf(['\'', '`', ','], source[0]) >= 0)
+	if (std.algorithm.indexOf(quoters.keys(), source[0]) >= 0)
 		return cast(LispArray) (cast(LispArray) parseTree("(" ~ source ~ ")", true)[0]).getMembers()[0];
 	else
 		return cast(LispArray) (cast(LispArray) parseTree(source, true)[0]).getMembers()[0];
@@ -1057,6 +1056,17 @@ private LispObject evalFunctionCall(LispObject function_body,
 	
 	return eval(function_body, env);
 }
+
+
+
+
+/**
+ * Eval lisp expression with syntax sugar and return result.
+*/ 
+LispObject doLisp(string source, EnvStack es){
+	return eval(sugarToRealLisp(parse(source)), es);
+}
+
 
 
 
