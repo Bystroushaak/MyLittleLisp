@@ -48,14 +48,11 @@ int main(string[] args){
 	}
 	
 	
-	
 	// here goes program
-	
-//	Potenciální unittest
 	EnvStack es = new EnvStack();
 	es.addLocal(new LispSymbol("id"), parse("(lambda x x)"));
 	
-	writeln(es);
+	writeln(es.toLispString());
 	write(">> ");
 	
 	foreach(string line; lines(stdin)){
@@ -65,7 +62,7 @@ int main(string[] args){
 		}
 		
 		try
-			writeln(eval(parse(line), es).toLispString());
+			writeln(doLisp(line, es).toSugar());
 		catch(LispException e)
 			writeln(e.msg);
 		
@@ -74,6 +71,7 @@ int main(string[] args){
 	}
 	
 	writeln(es);
+	
 	
 	return 0;
 }
