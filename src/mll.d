@@ -2,20 +2,17 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.9.1
- * Date:    05.07.2012
+ * Version: 0.9.3
+ * Date:    12.07.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
  *     http://creativecommons.org/licenses/by/3.0/
  * 
  * TODO:
- *  Repl smycku s pocitadlem zavorek, teprve pak evalnout.
  *  skipStringsAndFind(char c) 
- *  Nekonečná přesnost čísel
  *  
  *  Remove var pro EnvStack
- *  Přetížit opEquals pro lisp symbol a odstranit getName()
 */
 module mll;
 
@@ -33,6 +30,7 @@ const string INF_PARAMS = "...";
 
 static enum string[char] quoters = ['\'':"quote", '`':"quasiquote", ',':"unquote"];
 // generate asoc. array reverse_quoters which have keys from quoters as values
+// I just wanted try mixin :)
 private string genReverseQuoters(){
 	string r_quoters = "static enum char[string] reverse_quoters = [";
 	foreach(char key, string val; quoters){
@@ -945,20 +943,6 @@ public LispObject eval(LispObject expr, EnvStack env){
 			else 
 				throw new LispException("Goofy please..");
 		}
-	}else if ((typeid(expr) == typeid(LispArray)) && // macro call                   // gimme LispArray
-	           ((parameters = (la = cast(LispArray) expr).getMembers()).length > 0) && // which have one or more members
-	           (typeid(parameters[0]) == typeid(LispArray))){                         // and first member is LispArray
-		la = cast(LispArray) parameters[0]; // 
-		if (la.getMembers().length == 3 && (s = cast(LispSymbol) la.getMembers()[0]) !is null && s.getName().toLower() == "macro"){
-			LispObject[] parnames_body = la.getMembers();
-			LispObject[] par_values = parameters.length == 2 ? [cast(LispObject) parameters[1]] : parameters[1 .. $];
-			
-			return evalFunctionCall(parnames_body[2], 
-				                     parnames_body[1], 
-				                     par_values, 
-				                     env, 
-				                     "macro");
-		} // nonmacro keywords fall to eval/lambda evaluation block
 	}
 	
 	// eval every expression in list
@@ -981,9 +965,25 @@ public LispObject eval(LispObject expr, EnvStack env){
 		// check if you can find (lambda 
 		if (parameters.length > 0 && (s = cast(LispSymbol) parameters[0]) !is null && s.getName().toLower() == "lambda"){
 			if (parameters.length != 3)
-				throw new BadNumberOfParametersException("lambda takes two parameters!"); // lambda, params, body
+				throw new BadNumberOfParametersException("lambda keyword takes two parameters!"); // lambda, params, body
 			
 			return evalFunctionCall(parameters[2], parameters[1], par_values, env);
+		}else if (parameters.length > 0 && (s = cast(LispSymbol) parameters[0]) !is null && s.getName().toLower() == "macro"){
+			if (parameters.length != 3)
+				throw new BadNumberOfParametersException("macro keyword takes two parameters!"); // macro, params, body
+				
+			LispObject[] uneval_values = (cast(LispArray) expr).getMembers();
+			
+			if (uneval_values.length <= 1)
+				uneval_values.length = 0;
+			else
+				uneval_values = uneval_values.remove(0);
+			
+			return evalFunctionCall(parameters[2], 
+				                     parameters[1], 
+				                     uneval_values, 
+				                     env, 
+				                     "macro");
 		}else
 			return eval(fn, env);
 	}
