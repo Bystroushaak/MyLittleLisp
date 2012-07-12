@@ -2,7 +2,7 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.9.3
+ * Version: 0.9.4
  * Date:    12.07.2012
  * 
  * Copyright: 
@@ -945,9 +945,38 @@ public LispObject eval(LispObject expr, EnvStack env){
 		}
 	}
 	
-	// eval every expression in list
-	LispObject[] par_values;
-	foreach(LispObject o; (cast(LispArray) expr).getMembers())
+	parameters = (cast(LispArray) expr).getMembers();
+	if (parameters.length == 0)
+		return expr;
+	
+	// eval first symbol/list - needed for macro call detection
+	LispObject[] par_values = [eval(parameters[0], env)];
+	parameters = parameters.remove(0);
+	
+	// macro evaluation
+	if ((la = cast(LispArray) par_values[0]) !is null){ // get LispArray
+		LispObject[] macro_par = la.getMembers();        // get content od LispArray
+		if (macro_par.length > 0 && (s = cast(LispSymbol) macro_par[0]) !is null && s.getName().toLower() == "macro"){ // detect macro call
+			if (macro_par.length != 3)
+				throw new BadNumberOfParametersException("macro keyword takes two parameters!"); // macro, params, body
+			
+			// macro don't evaluates parameters, so take them from expr
+			LispObject[] uneval_values = (cast(LispArray) expr).getMembers();
+			
+			// expr contains macro call and parameters and I wan't only parameters
+			if (uneval_values.length >= 1)
+				uneval_values = uneval_values.remove(0);
+			
+			return evalFunctionCall(macro_par[2], 
+				                     macro_par[1], 
+				                     uneval_values, 
+				                     env, 
+				                     "macro");
+		}
+	}
+	
+	// eval rest
+	foreach(LispObject o; parameters)
 		par_values ~= eval(o, env);
 	
 	if (par_values.length == 0)
@@ -968,22 +997,6 @@ public LispObject eval(LispObject expr, EnvStack env){
 				throw new BadNumberOfParametersException("lambda keyword takes two parameters!"); // lambda, params, body
 			
 			return evalFunctionCall(parameters[2], parameters[1], par_values, env);
-		}else if (parameters.length > 0 && (s = cast(LispSymbol) parameters[0]) !is null && s.getName().toLower() == "macro"){
-			if (parameters.length != 3)
-				throw new BadNumberOfParametersException("macro keyword takes two parameters!"); // macro, params, body
-				
-			LispObject[] uneval_values = (cast(LispArray) expr).getMembers();
-			
-			if (uneval_values.length <= 1)
-				uneval_values.length = 0;
-			else
-				uneval_values = uneval_values.remove(0);
-			
-			return evalFunctionCall(parameters[2], 
-				                     parameters[1], 
-				                     uneval_values, 
-				                     env, 
-				                     "macro");
 		}else
 			return eval(fn, env);
 	}
