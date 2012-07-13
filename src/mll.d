@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.9.4
- * Date:    12.07.2012
+ * Version: 0.10.0
+ * Date:    13.07.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -39,7 +39,40 @@ private string genReverseQuoters(){
 	
 	return r_quoters ~ "];";
 }
-mixin(genReverseQuoters()); 
+mixin(genReverseQuoters());
+
+static string[] builtins = [
+	"lambda",
+	"macro",
+	"quote",
+	"q",
+	"unquote",
+	"uq",
+	"quasiquote",
+	"qq",
+	"list",
+	"cons",
+	"defl",
+	"defg",
+	"set!",
+	"car",
+	"cdr",
+	"eq",
+	"atom",
+	"null?",
+	"if",
+	"cond",
+	"=",
+	"+",
+	"-",
+	"*",
+	"/",
+	">",
+	"<",
+	"<=",
+	">=",
+	"show_stack"
+];
 
 
 
@@ -310,7 +343,8 @@ public:
 	*/
 	void popLevel(){
 		if (local_env.length > 1)
-			local_env = local_env.remove(local_env.length - 1);
+//			local_env = local_env.remove(local_env.length - 1);
+			local_env.length--;
 	}
 	
 	/**
@@ -318,7 +352,7 @@ public:
 	 * arguments to local namespace.
 	*/ 
 	void addLocal(LispSymbol key, LispObject value){
-			this.local_env[$ - 1][key] = value;
+		this.local_env[$ - 1][key] = value;
 	}
 	
 	/** 
@@ -349,26 +383,15 @@ public:
 	 *   UndefinedSymbolException
 	*/ 
 	LispObject find(LispSymbol key){
-		try
-			return findLocal(key);
-		catch(UndefinedSymbolException e)
-			return findGlobal(key);
-	}
-	/// Find local variable or throw UndefinedSymbolException error.
-	LispObject findLocal(LispSymbol key){
 		for (int i = local_env.length - 1; i >= 0; i--){
 			if (key in local_env[i]) // key in local environment?
 				return local_env[i][key];
 		}
 		
-		throw new UndefinedSymbolException("Undefined symbol '" ~ to!string(key) ~ "'!");
-	}
-	/// Find global variable or throw UndefinedSymbolException error.
-	LispObject findGlobal(LispSymbol key){
 		if (key in global_env)       // key in global environment?
 			return global_env[key];
 		
-		throw new UndefinedSymbolException("Undefined symbol '" ~ to!string(key) ~ "'!");
+		return null;
 	}
 	
 	/**
@@ -438,9 +461,9 @@ private int findMatchingBracket(string source){
 	if (source.length == 0)
 		return -1;
 	else if (source.length == 1)
-		throw new RangeError("Can't find matching bracket - your input string is too small.");
+		throw new ParseException("Can't find matching bracket - your input string is too small.");
 	if (source[0] != '(')
-		throw new RangeError("Can't find matching bracket, because your string doesn't start with one!");
+		throw new ParseException("Can't find matching bracket, because your string doesn't start with one!");
 	
 	// find it
 	int i = 1;
@@ -477,7 +500,7 @@ private LispObject[] parseTree(string source, bool first){
 	source = source.strip();
 	
 	if (source.length > 0 && std.algorithm.indexOf(quoters.keys() ~ '(', source[0]) < 0 && first)
-		throw new ParseException("Invalid expression.\nCorrect expressions starts with '(', not with '" ~ source[0] ~ "'!");
+		throw new ParseException("Invalid expression; correct expressions starts with '(', not with '" ~ source[0] ~ "'!");
 	
 	// create dom tree
 	LispArray la = new LispArray();
@@ -655,34 +678,37 @@ public LispObject eval(LispObject expr, EnvStack env){
 	LispArray la;
 	LispSymbol s;
 	LispObject[] parameters;
-	if (typeid(expr) == typeid(LispSymbol)){ // handle variables
-		s = cast(LispSymbol) expr;
+	if ((s = cast(LispSymbol) expr) !is null){ // handle variables
+		string name = s.getName();
 		
 		// look to the symbol table, return saved value, numeric value, or throw 
 		// error, if expr is not value/number
-		try{
-			return env.find(s); // return saved value
-		}catch(UndefinedSymbolException e){
+		LispObject o = env.find(s); // return saved value
+		if (o !is null)
+			return o;
+		else if (std.algorithm.indexOf(builtins, name) >= 0) // check if symbol is builtin
+			return expr;
+		else{
 			try{
-				to!long(s.getName());
+				to!long(name);
 			}catch(std.conv.ConvException){
 				try{
-					to!double(s.getName());
+					to!double(name);
 				}catch(std.conv.ConvException){
-					throw new UndefinedSymbolException(e.msg);
+					throw new UndefinedSymbolException("Undefined symbol " ~ name ~ "!");
 				}
 			}
 		}
 		return s; // return numeric value
-	}else if ((typeid(expr) == typeid(LispArray)) && // builtin keyword calling;        gimme LispArray
-	           ((parameters = (la = cast(LispArray) expr).getMembers()).length > 0) && // which have one or more members
-	           (typeid(parameters[0]) == typeid(LispSymbol))                       ){ // and first member is LispSymbol
+	}else if (((la = cast(LispArray) expr) !is null) &&        // builtin keyword calling; gimme LispArray
+	           ((parameters = la.getMembers()).length > 0) &&  // which have one or more members
+	           (typeid(parameters[0]) == typeid(LispSymbol))){ // and first member is LispSymbol
 		// save useful information
-		
 		s = cast(LispSymbol) parameters[0];
 		string name = s.getName().toLower();
 		parameters = parameters.remove(0); // get parameters
 		
+		/// Used for checking lenght of array - this saves lot of space and repeatedly written code.
 		void checkParamLength(LispObject[] parameters, int expected_length, string name){
 			if (expected_length == 1 && parameters.length != 1)
 				throw new BadNumberOfParametersException(name ~ " expects only one parameter!");
@@ -918,8 +944,8 @@ public LispObject eval(LispObject expr, EnvStack env){
 		}else if (std.algorithm.indexOf(["<", ">", "<=", ">=", "="], name) >= 0){
 			checkParamLength(parameters, 2, name);
 			
-			LispSymbol p1 = cast(LispSymbol) parameters[0];
-			LispSymbol p2 = cast(LispSymbol) parameters[1];
+			LispSymbol p1 = cast(LispSymbol) eval(parameters[0], env);
+			LispSymbol p2 = cast(LispSymbol) eval(parameters[1], env);
 			
 			if (p1 is null || p2 is null)
 				throw new BadTypeOfParametersException(name ~ " parameters can't be lists!");
@@ -942,6 +968,9 @@ public LispObject eval(LispObject expr, EnvStack env){
 				return (n1 == n2 ? new LispArray([new LispSymbol("t")]) : new LispArray());
 			else 
 				throw new LispException("Goofy please..");
+		}else if (name == "show_stack"){
+			writeln(env);
+			return new LispArray();
 		}
 	}
 	
@@ -987,8 +1016,7 @@ public LispObject eval(LispObject expr, EnvStack env){
 	par_values = par_values.remove(0);
 	
 	/* Executor - thic block executes function calls **************************/
-	if (typeid(fn) == typeid(LispArray)){ // lambda evaluation
-		la = cast(LispArray) fn;
+	if ((la = cast(LispArray) fn) !is null){ // lambda evaluation
 		parameters = la.getMembers();
 		
 		// check if you can find (lambda 
@@ -999,6 +1027,9 @@ public LispObject eval(LispObject expr, EnvStack env){
 			return evalFunctionCall(parameters[2], parameters[1], par_values, env);
 		}else
 			return eval(fn, env);
+	}else if ((s = cast(LispSymbol) fn) !is null){
+		if (std.algorithm.indexOf(builtins, s.getName()) >= 0)
+			return eval(new LispArray(fn ~ par_values), env);
 	}
 	
 	throw new UndefinedSymbolException("Undefined symbol or builtin keyword '" ~ fn.toLispString() ~ "'!");
@@ -1171,36 +1202,11 @@ unittest{
 	assert(eval(parse("((macro (x) (cdr x)) (id 4))"), env).toLispString() == "(4)");
 	assert(eval(parse("((lambda " ~ INF_PARAMS ~ " (car (cdr " ~ INF_PARAMS ~ "))) 1 2 3)"), env).toLispString() == "2");
 	assert(eval(parse("((lambda (a " ~ INF_PARAMS ~ ") (cons a (car (cdr " ~ INF_PARAMS ~ ")))) (q first) 1 2 3)"), env).toLispString() == "(first 2)");
+	
+	// macro test
+	assert(doLisp("(defl head (macro x (car x)))", env).toSugar() == "head");
+	assert(doLisp("(head (1 2 3))", env).toSugar() == "1");
+	doLisp("(defg defun (macro (name_args body) ,(cons (cons 'defg (car name_args)) `(,(cons (cons 'lambda (cdr name_args)) `(,body))))))", env);
+	assert(doLisp("(defun (a x) (+ x x))", env).toSugar() == "a");
+	assert(doLisp("(a 5)", env).toSugar() == doLisp("(+ 5 5)", env).toSugar());
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
