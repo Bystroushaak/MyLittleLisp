@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.10.0
- * Date:    13.07.2012
+ * Version: 0.11.0
+ * Date:    31.08.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
@@ -328,12 +328,13 @@ public:
 	 * local variables.
 	*/ 
 	void pushLevel(){
-		LispObject[LispSymbol] le;
-		this.local_env ~= le;
-	}
-	/// See: pushLevel()
-	void pushLevel(LispObject[LispSymbol] new_env){
-		this.local_env ~= new_env;
+		// Copy variables from previous scope to this - linear lookup in find()
+		// makes this two times faster, but little more memory expensive
+		if (this.local_env.length == 0){
+			LispObject[LispSymbol] le;
+			this.local_env ~= le;
+		}else
+			this.local_env ~= this.local_env[$-1].dup;
 	}
 	
 	/** 
@@ -383,10 +384,8 @@ public:
 	 *   UndefinedSymbolException
 	*/ 
 	LispObject find(LispSymbol key){
-		for (int i = local_env.length - 1; i >= 0; i--){
-			if (key in local_env[i]) // key in local environment?
-				return local_env[i][key];
-		}
+		if (key in local_env[$-1])   // key in local environment?
+			return local_env[$-1][key];
 		
 		if (key in global_env)       // key in global environment?
 			return global_env[key];
@@ -1209,4 +1208,28 @@ unittest{
 	doLisp("(defg defun (macro (name_args body) ,(cons (cons 'defg (car name_args)) `(,(cons (cons 'lambda (cdr name_args)) `(,body))))))", env);
 	assert(doLisp("(defun (a x) (+ x x))", env).toSugar() == "a");
 	assert(doLisp("(a 5)", env).toSugar() == doLisp("(+ 5 5)", env).toSugar());
+
+	// bechmark
+	import std.datetime;
+
+	void bench(uint rec){
+		EnvStack env = new EnvStack();
+		StopWatch sw;
+
+		string s_rec = to!string(rec);
+		doLisp("(defg xex (lambda x (if (> x 0) (xex (- x 1)) ()))))", env);
+
+		sw.start();
+		doLisp("(xex " ~ s_rec ~ ")", env);
+		sw.stop();
+
+		int ms = cast(int) sw.peek().msecs;
+		writeln(s_rec ~ " recursion = " ~ to!string(ms) ~ 
+		        "ms (1 cycle = " ~ to!string(cast(float) ms / cast(float) rec) ~ "ms)");
+	}
+
+	bench(50);
+	bench(500);
+	bench(1000);
+	bench(1500);
 }
