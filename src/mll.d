@@ -2,8 +2,8 @@
  * mll.d - My Little Lisp
  * 
  * Author:  Bystroushaak (bystrousak@kitakitsune.org)
- * Version: 0.11.0
- * Date:    31.08.2012
+ * Version: 0.12.0
+ * Date:    01.09.2012
  * 
  * Copyright: 
  *     This work is licensed under a CC BY.
