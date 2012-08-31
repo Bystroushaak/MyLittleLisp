@@ -17,13 +17,14 @@
 module mll;
 
 import std.string;
+import std.container;
 import core.exception;
 
 import std.conv : to;
 import std.algorithm : remove;
 
 
-import std.stdio;		// TODO: Odstranit
+import std.stdio;		// TODO: Remove
 
 
 const string INF_PARAMS = "...";
@@ -315,7 +316,10 @@ class LispSymbol : LispObject{
 */ 
 class EnvStack{
 	private LispObject[LispSymbol]   global_env;
-	private LispObject[LispSymbol][] local_env;
+	private auto local_env = SList!(LispObject[LispSymbol])(); // Single linked list, much faster than array
+	public  uint le_length;
+
+	private LispObject[LispSymbol] env; 
 	
 public:
 	///
@@ -330,11 +334,13 @@ public:
 	void pushLevel(){
 		// Copy variables from previous scope to this - linear lookup in find()
 		// makes this two times faster, but little more memory expensive
-		if (this.local_env.length == 0){
+		if (local_env.empty){
 			LispObject[LispSymbol] le;
-			this.local_env ~= le;
+			local_env.insert(le);
 		}else
-			this.local_env ~= this.local_env[$-1].dup;
+			local_env.insert(local_env.front().dup);
+
+		le_length++;
 	}
 	
 	/** 
@@ -343,9 +349,10 @@ public:
 	 * See: pushLevel()
 	*/
 	void popLevel(){
-		if (local_env.length > 1)
-//			local_env = local_env.remove(local_env.length - 1);
-			local_env.length--;
+		if (le_length > 0){ 
+			local_env.removeFront();
+			le_length--;
+		}
 	}
 	
 	/**
@@ -353,28 +360,38 @@ public:
 	 * arguments to local namespace.
 	*/ 
 	void addLocal(LispSymbol key, LispObject value){
-		this.local_env[$ - 1][key] = value;
+		env = local_env.front();
+		env[key] = value;
+		local_env.front(env);
 	}
 	
 	/** 
 	 * Add new local variable.
 	 * 
-	 * This function puts variables one level higher than addLocal()'(a v bh, so 
+	 * This function puts variables one level higher than addLocal(), so
 	 * they survive definition (which happens in its own separate namespace, 
 	 * because every eval() call creates one).
 	 * 
 	 * Variables could be type of LispSymbol or LispList.
 	*/ 
 	void addLocalVariable(LispSymbol key, LispObject value){
-			if (this.local_env.length >= 1)
-				this.local_env[$ - 2][key] = value;
-			else
-				this.local_env[0][key] = value;
+		if (le_length > 1){
+			auto slice = local_env[];
+			slice.popFront(); // I want $ - 2 
+
+			env = slice.front();
+			env[key] = value;
+			slice.front(env);
+		}else{
+			env = local_env.front();
+			env[key] = value;
+			local_env.front(env);
+		}
 	}
 	
 	/// Same as addLocal, but adds variables to global namespace
 	void addGlobal(LispSymbol key, LispObject value){
-		this.global_env[key] = value;
+		global_env[key] = value;
 	}
 	
 	/**
@@ -384,10 +401,10 @@ public:
 	 *   UndefinedSymbolException
 	*/ 
 	LispObject find(LispSymbol key){
-		if (key in local_env[$-1])   // key in local environment?
-			return local_env[$-1][key];
+		if (key in local_env.front())   // key in local environment?
+			return local_env.front()[key];
 		
-		if (key in global_env)       // key in global environment?
+		if (key in global_env)          // key in global environment?
 			return global_env[key];
 		
 		return null;
@@ -400,14 +417,15 @@ public:
 	 *   UndefinedSymbolException
 	*/ 
 	void set(LispSymbol key, LispObject val){
-		for (int i = local_env.length - 1; i >= 0; i--){
-			if (key in local_env[i]){ // key in local environment?
-				local_env[i][key] = val;
-				return;
-			}
+		if (key in local_env.front()){ // key in local environment?
+			env = local_env.front();
+			env[key] = val;
+			local_env.front(env);
+
+			return;
 		}
 		
-		if (key in global_env){       // key in global environment?
+		if (key in global_env){        // key in global environment?
 			global_env[key] = val;
 			return;
 		}
@@ -419,8 +437,9 @@ public:
 	string toString(){
 		string output = "Local env:\n";
 		
-		for (int i = local_env.length - 1; i >= 0; i--){
-			output ~= "\t" ~ to!string(i) ~ ": " ~ to!string(local_env[i]) ~ "\n";
+		for (int i = le_length - 1; i >= 0; i--){
+			output ~= "\t" ~ to!string(i) ~ ": " ~ to!string(local_env.front()) ~ "\n";
+			local_env.removeFront();
 		}
 		
 		output ~= "\nGlobal env:\n";
@@ -428,13 +447,13 @@ public:
 		
 		return output;
 	}
-	
+	///
 	string toLispString(){
-		string output = "((local (\n";
+		string output = ""; //((local (\n";
 		
-		for (int i = local_env.length - 1; i >= 0; i--){
-			output ~= "\t(q (" ~ to!string(i) ~ "))\n";
-		}
+		//for (int i = local_env.length - 1; i >= 0; i--){
+		//	output ~= "\t(q (" ~ to!string(i) ~ "))\n";
+		//}
 		
 		return output;
 	}
@@ -968,7 +987,7 @@ public LispObject eval(LispObject expr, EnvStack env){
 			else 
 				throw new LispException("Goofy please..");
 		}else if (name == "show_stack"){
-			writeln(env);
+			std.stdio.writeln(env);
 			return new LispArray();
 		}
 	}
@@ -1224,7 +1243,7 @@ unittest{
 		sw.stop();
 
 		int ms = cast(int) sw.peek().msecs;
-		writeln(s_rec ~ " recursion = " ~ to!string(ms) ~ 
+		std.stdio.writeln(s_rec ~ " recursion = " ~ to!string(ms) ~ 
 		        "ms (1 cycle = " ~ to!string(cast(float) ms / cast(float) rec) ~ "ms)");
 	}
 
